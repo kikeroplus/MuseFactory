@@ -162,7 +162,7 @@ class CompareTab(QWidget):
                     self.results[row] = job.result
                     self._set(row, 1, f"{job.elapsed:.1f} 秒 (中間 {t1:.1f} + 書く {t2:.1f})")
                     over = result.over_limit
-                    self._set(row, 2, f"{result.count} {result.unit}", style.WARN if over else "")
+                    self._set(row, 2, f"{result.count} {result.unit}", style.OVER if over else "")
                     self._set(row, 3, result.text)
                 elif job.status == CANCELLED:
                     self._set(row, 1, "キャンセルしました", style.HINT)

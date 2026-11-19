@@ -384,8 +384,8 @@ class GenerateTab(QWidget):
         count, unit = renderer.measure(item.text, item.target.output_language)
         mark = "✓ 保存済み  " if item.saved else ""
         over = item.target.max_length and count > item.target.max_length
-        text = f"{mark}{head}  {count} {unit}" + (f" (目安 {item.target.max_length} を超えています)" if over else "")
-        return text, style.WARN if over else ""
+        text = f"{mark}{head}  {count} {unit}" + (" (目安超え)" if over else "")
+        return text, ""
 
     def _refresh_list(self):
         self._loading = True
@@ -482,8 +482,8 @@ class GenerateTab(QWidget):
         count, unit = renderer.measure(self.text_edit.toPlainText(), item.target.output_language)
         limit = item.target.max_length
         over = limit and count > limit
-        self.count_label.setText(f"{count} {unit} / 目安 {limit}" + ("  超えています" if over else ""))
-        self.count_label.setStyleSheet(f"color: {style.WARN if over else style.HINT};")
+        self.count_label.setText(f"{count} {unit} / 目安 {limit}" + ("  (超えています)" if over else ""))
+        self.count_label.setStyleSheet(f"color: {style.OVER if over else style.HINT};")
 
     def _update_summary(self):
         done = [i for i in self.items if not i.pending and not i.error]

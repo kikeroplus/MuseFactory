@@ -650,8 +650,9 @@ class StoryTab(QWidget):
                 text, color = f"… {item.label}", style.HINT
             else:
                 count, unit = renderer.measure(item.text, item.target.output_language)
-                text = ("✓ 保存済み  " if item.saved else "") + f"{item.label}  {count} {unit}"
-                color = style.WARN if item.target.max_length and count > item.target.max_length else ""
+                over = item.target.max_length and count > item.target.max_length
+                text = ("✓ 保存済み  " if item.saved else "") + f"{item.label}  {count} {unit}" + (" (目安超え)" if over else "")
+                color = ""
             entry = QListWidgetItem(text)
             if color:
                 entry.setForeground(QColor(color))

@@ -263,6 +263,8 @@ class MainWindow(QMainWindow):
         self.results_strip.info_requested.connect(self.generation.show_record)
         QShortcut(QKeySequence("Ctrl+J"), self, activated=self.generation.show_jobs)
         self.file_list.customContextMenuRequested.connect(self.show_file_menu)
+        QShortcut(QKeySequence(Qt.Key.Key_Delete), self.file_list, activated=self.delete_files,
+                  context=Qt.ShortcutContext.WidgetShortcut)
         self.folder_tree.customContextMenuRequested.connect(self.show_folder_menu)
 
     def _restore_state(self):
@@ -480,7 +482,41 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         pwc = menu.addAction("PWC で開く")
         pwc.triggered.connect(self.open_folder_in_pwc)
+        menu.addSeparator()
+        targets = self.selected_files()
+        delete = menu.addAction(f"選択中の {len(targets)} 個のファイルを削除 (ごみ箱へ)\tDel" if len(targets) > 1
+                                else "ファイルを削除 (ごみ箱へ)\tDel")
+        delete.setEnabled(bool(targets))
+        delete.triggered.connect(self.delete_files)
         menu.exec(self.file_list.viewport().mapToGlobal(pos))
+
+    def delete_files(self):
+        """一覧で選んでいるファイルをごみ箱へ。1 つなら確認なし、複数かごみ箱に入らないときは確認する。
+        そのファイルから生成した画像・動画は消さない。"""
+        paths = self.selected_files()
+        if not paths:
+            return
+        recyclable = all(results.can_recycle(p) for p in paths)
+        if len(paths) > 1 or not recyclable:
+            what = paths[0].name if len(paths) == 1 else f"選択中の {len(paths)} 個のファイル"
+            text = f"{what}を削除 (ごみ箱へ) しますか？"
+            if not recyclable:
+                text = f"{what}を削除しますか？\n\nこの場所のファイルはごみ箱に入らず、完全に消えます。"
+            if QMessageBox.question(self, "ファイルを削除", text) != QMessageBox.StandardButton.Yes:
+                return
+        first_row = min(self.file_list.row(item) for item in self.file_list.selectedItems())
+        error = results.send_to_recycle_bin(paths)
+        gone = [p for p in paths if not p.exists()]
+        self.load_folder()
+        # 消したあとは、同じ位置 (= 次) のものを選ぶ
+        if self.file_list.count() and self.file_list.currentItem() is None:
+            self.file_list.setCurrentRow(min(first_row, self.file_list.count() - 1))
+        if error and len(gone) < len(paths):
+            self.statusBar().showMessage(f"{error}  (残った {len(paths) - len(gone)} 個 / ごみ箱へ移動 {len(gone)} 個)")
+        elif len(gone) == 1:
+            self.statusBar().showMessage(f"ごみ箱へ移動しました: {gone[0].name}")
+        else:
+            self.statusBar().showMessage(f"{len(gone)} 個のファイルをごみ箱へ移動しました")
 
     def show_folder_menu(self, pos):
         """フォルダツリーの右クリックメニュー。右クリックしただけではフォルダを開かない。"""
