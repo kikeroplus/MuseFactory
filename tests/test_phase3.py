@@ -12,8 +12,8 @@ from app.core.config import LLMProfile
 from app.core.job_queue import CANCELLED, DONE, Job, JobQueue
 from app.core.llm_client import LLMClient
 from app.core.tasks import process
-from app.core.tasks.extract import (REMOVED, Extracted, add_to_library, remove_elements, write_per_element,
-                                    write_removed, write_wildcards)
+from app.core.tasks.extract import (REMOVED, Extracted, add_to_library, delete_phrases, remove_elements,
+                                    write_per_element, write_removed, write_wildcards)
 from app.ui.common import diff_ranges
 from app.util import files, log
 from tests.fake_server import FakeServer
@@ -51,13 +51,12 @@ def responder(payload):
                      "timeline": [{"start": 0, "end": 3, "action": "smiles"}, {"start": 3, "end": 99, "action": "waves"}]})
         return json.dumps(data)
     if system.startswith("You remove"):
-        # 手がかりの語を消す (手がかりがなければ background は最後の項目とみなして消す)
+        # 消す語句を書き抜いて返す (手がかりがなければ background は最後の項目とみなす)
         head, prompt = user.split("Prompt:\n", 1)
         words = re.findall(r'^- \w+: "(.*)"$', head, flags=re.MULTILINE)
         if not words and "- background" in head:
             words = [prompt.rsplit(",", 1)[-1].strip()]
-        parts = [p.strip() for p in prompt.split(",")]
-        return "Prompt:\n" + ", ".join(p for p in parts if p not in words)
+        return json.dumps({"phrases": words}, ensure_ascii=False)
     if system.startswith("You edit a prompt"):
         return "Prompt:\n" + user.split("Prompt:\n", 1)[1].replace("school uniform", "red dress")
     if system.startswith("You edit a scene"):
@@ -222,13 +221,31 @@ class RemoveTest(Base):
         data = DECOMPOSED["a.txt"]
         text = remove_elements(self.client, PROMPTS["a.txt"], ["background", "pose"], data)
         self.assertEqual(text, "1girl, smiling, school uniform")
-        user = self.server.requests_chat()[-1]["messages"][-1]["content"]
-        self.assertIn('- background: "classroom"', user)  # 分解で見つけた語を手がかりに渡す
-        self.assertIn('- pose: "standing"', user)
+        users = [r["messages"][-1]["content"] for r in self.server.requests_chat()]
+        self.assertEqual(len(users), 2)  # 1 要素ずつ頼む
+        self.assertIn('- background: "classroom"', users[0])  # 分解で見つけた語を手がかりに渡す
+        self.assertIn('- pose: "standing"', users[1])
+
+    def test_delete_phrases(self):
+        text = "1girl, looking at viewer, sitting on red velvet sofa, hands on lap, living room, masterpiece"
+        self.assertEqual(delete_phrases(text, ["on red velvet sofa", "living room"]),
+                         "1girl, looking at viewer, sitting, hands on lap, masterpiece")
+        self.assertEqual(delete_phrases(text, ["sitting on red velvet sofa", "hands on lap"]),
+                         "1girl, looking at viewer, living room, masterpiece")
+        # 文の形: つなぎの言葉も片づける。単語の途中では消さない
+        self.assertEqual(delete_phrases("A woman standing in a wheat field, golden hour", ["in a wheat field"]),
+                         "A woman standing, golden hour")
+        self.assertEqual(delete_phrases("outstanding view, stand", ["stand"]), "outstanding view")
+        # 重み・記法・改行・行末の区切りはそのまま。中身が消えた (…:1.1) は片づける
+        self.assertEqual(delete_phrases("masterpiece, (standing:1.1), <lora:a:0.8>, park,\nBREAK smiling",
+                                        ["standing", "park"]),
+                         "masterpiece, <lora:a:0.8>,\nBREAK smiling")
+        self.assertEqual(delete_phrases("少女が教室で座っている、制服、夕日", ["教室で", "夕日"]), "少女が座っている、制服")
+        self.assertEqual(delete_phrases("a, b", ["not there"]), "a, b")  # 見つからない語句は消さない
 
     def test_job_remove_only_skips_decompose(self):
         data, _note = self.run_job("a.txt", [], ["background"])
-        self.assertEqual(len(self.server.requests_chat()), 1)  # 消すだけなら分解しない
+        self.assertEqual(len(self.server.requests_chat()), 1)  # 消すだけなら分解しない (消す要素 1 つで 1 回)
         self.assertEqual(data[REMOVED], "1girl, standing, smiling, school uniform")
 
     def test_job_extract_and_remove(self):
