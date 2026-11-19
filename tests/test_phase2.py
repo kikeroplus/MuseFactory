@@ -159,6 +159,18 @@ class NamingTest(unittest.TestCase):
         self.assertEqual(serial, 13)
         self.assertEqual(output.serial_stem("muse", serial, "Krea2"), "muse_0013_Krea2")
 
+    def test_processed_stem_does_not_grow(self):
+        ps = output.processed_stem
+        self.assertEqual(ps("muse_0001_Krea2", "mod"), "muse_0001_Krea2_mod")
+        self.assertEqual(ps("muse_0001_Krea2_mod", "mod"), "muse_0001_Krea2_mod")  # 保存で _2 が付く
+        self.assertEqual(ps("muse_0001_Krea2_mod_3", "mod"), "muse_0001_Krea2_mod")
+        self.assertEqual(ps("muse_0001_Krea2_mod_enhance", "mod"), "muse_0001_Krea2_enhance_mod")
+        self.assertEqual(ps("muse_0001_Krea2_mod", "enhance"), "muse_0001_Krea2_mod_enhance")
+        self.assertEqual(ps("summer_mode", "mod"), "summer_mode_mod")  # 言葉の一部は外さない
+        slugs = ("Krea2", "Wan2.2I2V", "Qwen2.1")
+        self.assertEqual(ps("a_conv_Wan2.2I2V", "conv", "Qwen2.1", slugs), "a_conv_Qwen2.1")
+        self.assertEqual(ps("a_conv_Wan2.2I2V_2_mod", "conv", "Krea2", slugs), "a_mod_conv_Krea2")
+
     def test_safe_name(self):
         self.assertEqual(files.safe_name('勇者:魔王/戦い?'), "勇者_魔王_戦い_")
 

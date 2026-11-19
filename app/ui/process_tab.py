@@ -1,4 +1,4 @@
-"""作業タブ「加工」(SPEC 5.3): 盛る・英訳・モデル変換・画像→動画・ネガティブ生成。
+"""作業タブ「加工」(SPEC 5.3): 指示で変える・盛る・英訳・モデル変換・画像→動画・ネガティブ生成。
 
 ファイルごとに 1 ジョブ。中で LLM を何回か呼ぶときは、それぞれのタスクの割り当て (router) に従う。
 結果は変更前と変更後を並べて見せ、直してから保存する。
@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout,
-                               QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSplitter,
+                               QLabel, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
                                QVBoxLayout, QWidget)
 
 from ..core import output, renderer
@@ -25,6 +25,7 @@ from .common import DiffView, FolderRow, InputFilesBox, resolve_output_folder
 
 # (キー, 画面の名前, 主なタスク, 名前に付けるもの)
 OPERATIONS = [
+    ("modify", "指示で変える (例: 女性の服を赤に)", "enhance", "mod"),
     ("enhance", "盛る (空いた・薄い要素を補う)", "enhance", "enhance"),
     ("translate", "英訳 (日本語版も .muse に残す)", "translate", "en"),
     ("convert", "モデル変換 (別のモデル向けに書き直す)", "render", "conv"),
@@ -87,6 +88,15 @@ class ProcessTab(QWidget):
         for key, label, _task, _suffix in OPERATIONS:
             self.op_combo.addItem(label, key)
         form.addRow("処理", self.op_combo)
+        self.instruction_edit = QPlainTextEdit()
+        self.instruction_edit.setPlaceholderText("例: 女性の服を赤に変えて / 夜の場面にして / 猫を足して\n"
+                                                 "(何行でも書けます。Ctrl+Enter で加工する)")
+        self.instruction_edit.setToolTip("指示に関係するところだけ書き換え、ほかの言葉はそのまま残します (Ctrl+Enter で加工する)")
+        self.instruction_edit.setTabChangesFocus(True)
+        lines = self.instruction_edit.fontMetrics().lineSpacing()
+        self.instruction_edit.setFixedHeight(lines * 4 + 12)  # 4 行ぶん
+        self.instruction_label = QLabel("指示")
+        form.addRow(self.instruction_label, self.instruction_edit)
         self.target_combo = QComboBox()
         form.addRow("対象モデル", self.target_combo)
         self.seconds_spin = QDoubleSpinBox()
@@ -139,6 +149,9 @@ class ProcessTab(QWidget):
 
         self.op_combo.currentIndexChanged.connect(self._on_op_changed)
         self.run_button.clicked.connect(self.start)
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            QShortcut(QKeySequence(keys), self.instruction_edit, activated=self.start,
+                      context=Qt.ShortcutContext.WidgetShortcut)
         self.result_list.currentRowChanged.connect(self.show_item)
         self.result_list.itemChanged.connect(self._on_checked)
         self.diff.edited.connect(self._on_edited)
@@ -173,9 +186,12 @@ class ProcessTab(QWidget):
             index = self.target_combo.findText(current)
             if index >= 0:
                 self.target_combo.setCurrentIndex(index)
-        self.target_combo.setEnabled(op != "translate")
+        self.target_combo.setEnabled(op not in ("translate", "modify"))
         self.target_combo.setToolTip("英訳では使いません" if op == "translate" else
+                                     "元のプロンプトの書き方のまま変えるので使いません" if op == "modify" else
                                      "ネガティブを使うモデルだけ" if op == "negative" else "")
+        self.instruction_edit.setVisible(op == "modify")
+        self.instruction_label.setVisible(op == "modify")
         self.seconds_spin.setVisible(op == "to_video")
         self.seconds_label.setVisible(op == "to_video")
 
@@ -190,9 +206,15 @@ class ProcessTab(QWidget):
         if not sources:
             QMessageBox.information(self, "加工", "入力ファイルを足してください。")
             return
-        target = self.targets.get(self.target_combo.currentText()) if op != "translate" else None
-        if op != "translate" and target is None:
+        no_target = op in ("translate", "modify")
+        target = None if no_target else self.targets.get(self.target_combo.currentText())
+        if not no_target and target is None:
             QMessageBox.information(self, "加工", "対象モデルを選んでください。")
+            return
+        instruction = self.instruction_edit.toPlainText().strip()
+        if op == "modify" and not instruction:
+            QMessageBox.information(self, "加工", "指示を入れてください (例: 女性の服を赤に変えて)。")
+            self.instruction_edit.setFocus()
             return
         if self.busy():
             return
@@ -209,14 +231,16 @@ class ProcessTab(QWidget):
         self._job_item.clear()
         jobs = []
         for item in self.items:
-            job = Job(task, item.source.name, self._make_job(op, item.source, target, seconds, use_existing))
+            job = Job(task, item.source.name, self._make_job(op, item.source, target, seconds, use_existing,
+                                                             instruction))
             self._job_item[job.id] = item
             jobs.append(job)
         self._refresh_list()
         self._batch = self.queue.submit(jobs, name="加工", quiet=True)
         self._update_buttons()
 
-    def _make_job(self, op: str, path: Path, target: Optional[TargetProfile], seconds: float, use_existing: bool):
+    def _make_job(self, op: str, path: Path, target: Optional[TargetProfile], seconds: float, use_existing: bool,
+                  instruction: str = ""):
         router = self.router
 
         def client_for(task: str, profile) -> LLMClient:
@@ -233,6 +257,26 @@ class ProcessTab(QWidget):
                 if not text:
                     raise ValueError("ファイルが空です")
                 result.after = process.translate_text(client_for("translate", profile), text)
+                return result
+            if op == "modify":
+                # 1. 中間表現で何が変わるかを決める (照明など指示から外れて変わるものも拾える)
+                # 2. 文は直接書き換える (言い回しを残すため。モデル向けに書き直すと全部の言葉が変わる)
+                if not text:
+                    raise ValueError("ファイルが空です")
+                data = process.existing_intermediate(path) if use_existing else None
+                if data is None:
+                    data = process.decompose(client_for("extract", profile), text, path)
+                token.check()
+                changed = process.modify(client_for("enhance", profile), data, instruction)
+                changed["source"] = {"type": "modify", "files": [str(path)], "instruction": instruction}
+                token.check()
+                result.after = process.modify_text(client_for("enhance", profile), text, instruction,
+                                                   process.changed_fields(data, changed))
+                result.data = changed
+                if result.after.strip() == text:
+                    result.note = "変わりませんでした (指示に当てはまるところがないかもしれません)"
+                negative = output.negative_path(path)
+                result.negative = files.read_text(negative).strip() if negative.is_file() else ""
                 return result
             data = process.existing_intermediate(path) if use_existing else None
             if data is not None:
@@ -326,10 +370,16 @@ class ProcessTab(QWidget):
         ok = not item.pending and not item.error
         self.diff.set_texts(item.before, item.after if ok else item.error, editable=ok)
         info = item.note
-        if ok and self._target is not None and self._op != "negative":
-            count, unit = renderer.measure(item.after, self._target.output_language)
-            info = f"{count} {unit} / 目安 {self._target.max_length}" + (f"  {info}" if info else "")
+        target = self._target if self._op != "modify" else self._source_target(item)
+        if ok and target is not None and self._op != "negative":
+            count, unit = renderer.measure(item.after, target.output_language)
+            info = f"{count} {unit} / 目安 {target.max_length}" + (f"  {info}" if info else "")
         self.diff.info_label.setText(info)
+
+    def _source_target(self, item: ProcessResult) -> Optional[TargetProfile]:
+        """指示で変えたもの: 元のファイルを作ったときのモデル (.muse の中間表現に書いてあれば)。"""
+        name = (item.data or {}).get("target")
+        return self.targets.get(name) if name else None
 
     def _on_edited(self):
         item = self.current_item()
@@ -371,15 +421,21 @@ class ProcessTab(QWidget):
                 if op == "negative":
                     path = files.unique_path(output.negative_path(item.source))
                     files.write_text_atomic(path, item.after.strip() + "\n")
+                elif op == "modify":
+                    path = output.free_prompt_path(resolve_output_folder(self.out_folder.text(), item.source),
+                                                   output.processed_stem(stem, suffix), reserved)
+                    output.save_prompt(path, item.after, item.data, item.negative, save_json)
                 elif op == "translate":
                     path = output.free_prompt_path(resolve_output_folder(self.out_folder.text(), item.source),
-                                                   f"{stem}_{suffix}", reserved)
+                                                   output.processed_stem(stem, suffix), reserved)
                     output.save_prompt(path, item.after)
                     if keep_ja:
                         files.write_text_atomic(output.japanese_path(path), item.before.strip() + "\n")
                 else:
                     sub = output.VIDEO_DIR if op == "to_video" else ""
-                    name = f"{stem}_{suffix}" + (f"_{target.slug}" if op in ("convert", "to_video") else "")
+                    with_model = op in ("convert", "to_video")
+                    name = output.processed_stem(stem, suffix, target.slug if with_model else "",
+                                                 tuple(t.slug for t in self.targets.values()) if with_model else ())
                     path = output.free_prompt_path(resolve_output_folder(self.out_folder.text(), item.source, sub),
                                                    name, reserved)
                     data = dict(item.data or {})

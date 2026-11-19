@@ -60,6 +60,20 @@ def next_serial(folder: Path, head: str) -> int:
     return largest + 1
 
 
+def processed_stem(stem: str, op_suffix: str, model_slug: str = "", known_slugs: tuple = ()) -> str:
+    """加工したファイルの名前の元。同じ加工の印 (と重なりよけの番号) を外してから末尾に付け直すので、
+    同じ加工を何度かけても名前は伸びない (muse_0001_Krea2_mod.txt を指示で変える → muse_0001_Krea2_mod_2.txt)。
+
+    model_slug: モデル変換・画像→動画で付けるモデルの名前。known_slugs のどれかが付いた同じ加工の印を外す。"""
+    stem = files.safe_name(stem)
+    mark = re.escape(op_suffix)
+    if known_slugs or model_slug:
+        slugs = sorted({*known_slugs, model_slug} - {""}, key=len, reverse=True)
+        mark += "_(?:" + "|".join(re.escape(s) for s in slugs) + ")"
+    stripped = re.sub(rf"_{mark}(?:_\d+)?(?=_|$)", "", stem, flags=re.IGNORECASE) or stem
+    return f"{stripped}_{op_suffix}" + (f"_{model_slug}" if model_slug else "")
+
+
 def serial_stem(head: str, serial: int, rest: str = "") -> str:
     stem = f"{files.safe_name(head)}_{serial:0{SERIAL_DIGITS}d}"
     return f"{stem}_{rest}" if rest else stem

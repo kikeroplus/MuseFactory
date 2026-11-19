@@ -4,7 +4,7 @@
   "mode": "edit",
   "output_language": "en",
   "style": "natural_sentence",
-  "max_length": 80,
+  "max_length": 50,
   "negative_supported": true,
   "element_order": [
     "subject",

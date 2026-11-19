@@ -4,7 +4,7 @@
   "mode": "t2i",
   "output_language": "en",
   "style": "natural_sentence",
-  "max_length": 120,
+  "max_length": 150,
   "negative_supported": false,
   "element_order": [
     "subject",
