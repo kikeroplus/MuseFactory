@@ -52,9 +52,11 @@ class GenerateTab(QWidget):
     def __init__(self, targets: dict[str, TargetProfile], queue, bridge, settings: dict,
                  folder: Callable[[], str], on_saved: Callable[[list[Path]], None],
                  open_in_pwc: Callable[[Path, list[Path]], None], save_settings: Callable[[], None],
-                 generate_files: Optional[Callable[[list[Path]], None]] = None, parent=None):
+                 generate_files: Optional[Callable[[list[Path]], None]] = None,
+                 add_example: Optional[Callable[[str, str], None]] = None, parent=None):
         super().__init__(parent)
         self.targets = targets
+        self.add_example = add_example
         self.queue = queue
         self.settings = settings
         self.folder = folder
@@ -88,14 +90,7 @@ class GenerateTab(QWidget):
         target_box = QGroupBox("対象モデル (複数可)")
         tb = QVBoxLayout(target_box)
         self.target_list = QListWidget()
-        for name, target in self.targets.items():
-            item = QListWidgetItem(f"{name}  ({target.mode})")
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            self.target_list.addItem(item)
-        if not self.targets:
-            self.target_list.addItem("(profiles/targets/ にモデルプロファイルがありません)")
+        self.refresh_targets()
         tb.addWidget(self.target_list)
         top.addWidget(target_box, 2)
 
@@ -134,6 +129,10 @@ class GenerateTab(QWidget):
         self.count_label = QLabel("")
         head.addStretch(1)
         head.addWidget(self.count_label)
+        self.example_button = QPushButton("このプロンプトをお手本に追加")
+        self.example_button.setToolTip("このモデルのプロファイルの example_prompts に足します (次から LLM に見本として渡します)")
+        self.example_button.setVisible(self.add_example is not None)
+        head.addWidget(self.example_button)
         ed.addLayout(head)
         self.text_edit = QPlainTextEdit()
         ed.addWidget(self.text_edit, 3)
@@ -183,11 +182,56 @@ class GenerateTab(QWidget):
         self.text_edit.textChanged.connect(self.on_text_edited)
         self.negative_edit.textChanged.connect(self.on_negative_edited)
         self.rerender_button.clicked.connect(self.rerender_current)
+        self.example_button.clicked.connect(self._add_current_example)
         self.save_button.clicked.connect(lambda: self.save_checked())
         self.save_generate_button.clicked.connect(lambda: self.save_checked(generate=True))
         self.pwc_button.clicked.connect(lambda: self.open_in_pwc(self.last_saved[0].parent, self.last_saved))
         self.pwc_check.toggled.connect(self.on_pwc_check)
         self._set_editor_enabled(False)
+
+    def refresh_targets(self):
+        """モデルプロファイルを読み直したとき。チェックは名前で残す。"""
+        checked = {n for n in (self.target_list.item(r).data(Qt.ItemDataRole.UserRole)
+                               for r in range(self.target_list.count())) if n} & set(self._checked_names())
+        self.target_list.clear()
+        for name, target in self.targets.items():
+            item = QListWidgetItem(f"{name}  ({target.mode})")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if name in checked else Qt.CheckState.Unchecked)
+            self.target_list.addItem(item)
+        if not self.targets:
+            self.target_list.addItem("(profiles/targets/ にモデルプロファイルがありません)")
+
+    def _checked_names(self) -> list[str]:
+        out = []
+        for row in range(self.target_list.count()):
+            item = self.target_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) and item.checkState() == Qt.CheckState.Checked:
+                out.append(item.data(Qt.ItemDataRole.UserRole))
+        return out
+
+    def _add_current_example(self):
+        item = self.current_item()
+        if item is None or item.pending or item.error or self.add_example is None:
+            return
+        self.add_example(item.target.name, self.text_edit.toPlainText())
+
+    def start_from_intermediates(self, datas: list[dict], targets: list[TargetProfile], name: str = "mix") -> bool:
+        """中間表現はできている (ライブラリのミックスなど) ので、各モデル向けのレンダリングだけする。"""
+        if self.busy():
+            QMessageBox.information(self, "ざっくり生成", "作っている途中です。終わってからにしてください。")
+            return False
+        unsaved = [i for i in self.items if not i.pending and not i.error and i.saved is None]
+        if unsaved and QMessageBox.question(
+                self, "ざっくり生成", f"保存していない結果が {len(unsaved)} 件あります。捨てて作りますか?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return False
+        self.variations = [Variation(i, data) for i, data in enumerate(datas, start=1)]
+        self.items = [ResultItem(v, t) for v in self.variations for t in targets]
+        self.name_edit.setText(name)
+        self._submit_render(self.items, f"{name} (各モデル向け)")
+        return True
 
     def _update_omakase_label(self):
         value = self.omakase.value()
@@ -462,6 +506,7 @@ class GenerateTab(QWidget):
         self.save_generate_button.setEnabled(self.save_button.isEnabled())
         item = self.current_item()
         self.rerender_button.setEnabled(not busy and item is not None and item.intermediate is not None)
+        self.example_button.setEnabled(item is not None and not item.pending and not item.error)
         self.pwc_button.setEnabled(bool(self.last_saved))
 
     # ------------------------------------------------------------ 保存

@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLin
 from ..core import output
 from . import style
 
-INPUT_SUFFIXES = {".txt"}
+INPUT_SUFFIXES = {".txt"}  # フォルダの「全部」で拾うもの
+PICK_SUFFIXES = {".txt", ".png"}  # 選んで足せるもの (.png は埋め込まれたプロンプトを読む)
 REMOVED_BG = "#ffd7d5"
 ADDED_BG = "#d4f4dd"
 
@@ -64,7 +65,7 @@ class InputFilesBox(QGroupBox):
         layout.addWidget(self.count_label)
 
         self.add_selected_button.clicked.connect(lambda: self.add([p for p in self.selected_in_main()
-                                                                   if p.suffix.lower() in INPUT_SUFFIXES]))
+                                                                   if p.suffix.lower() in PICK_SUFFIXES]))
         self.add_folder_button.clicked.connect(self.add_folder)
         self.add_files_button.clicked.connect(self.choose_files)
         self.remove_button.clicked.connect(self.remove_selected)
@@ -92,7 +93,8 @@ class InputFilesBox(QGroupBox):
             self.add(prompt_files_in(folder))
 
     def choose_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, "ファイルを選ぶ", self.current_folder(), "テキスト (*.txt)")
+        paths, _ = QFileDialog.getOpenFileNames(self, "ファイルを選ぶ", self.current_folder(),
+                                                "テキスト・生成した PNG (*.txt *.png)")
         self.add([Path(p) for p in paths])
 
     def remove_selected(self):

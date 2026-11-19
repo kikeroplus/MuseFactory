@@ -25,7 +25,7 @@ DEFAULT_SETTINGS = {
         "enhance": ["Qwen 9B @LLM機"],
         "negative": ["Qwen 9B @LLM機"],
         "story_plan": ["Qwen 9B @LLM機"],
-        "image_to_prompt": ["Gemma Vision @LLM機"],
+        "image_to_prompt": ["Qwen 9B @LLM機", "Gemma Vision @LLM機"],
         "profile_draft": ["Qwen 9B @LLM機"],
     },
     # LLM プロファイル名 → 同じ PC の ComfyUI。PC1/PC2 の LM Studio を使うときに足す (例: "Qwen 14B @PC1": "http://192.168.11.31:8188")

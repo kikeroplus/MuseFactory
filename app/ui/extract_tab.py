@@ -159,7 +159,7 @@ class ExtractTab(QWidget):
                 data = process.existing_intermediate(path)
                 if data is not None:
                     return data, "保存した中間表現"
-            text = files.read_text(path).strip()
+            text = files.read_prompt_source(path).strip()
             if not text:
                 raise ValueError("ファイルが空です")
             return process.decompose(LLMClient(profile), text, path), ""

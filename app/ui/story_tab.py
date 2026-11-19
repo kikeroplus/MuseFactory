@@ -62,9 +62,11 @@ class StoryTab(QWidget):
     def __init__(self, targets: dict[str, TargetProfile], queue, bridge, settings: dict,
                  current_folder: Callable[[], str], on_saved: Callable[[list[Path]], None],
                  open_in_pwc: Callable[[Path, list[Path]], None],
-                 generate_files: Optional[Callable[[list[Path]], None]] = None, parent=None):
+                 generate_files: Optional[Callable[[list[Path]], None]] = None,
+                 add_example: Optional[Callable[[str, str], None]] = None, parent=None):
         super().__init__(parent)
         self.targets = targets
+        self.add_example = add_example
         self.queue = queue
         self.settings = settings
         self.current_folder = current_folder
@@ -257,6 +259,11 @@ class StoryTab(QWidget):
         self.save_generate_button = QPushButton("保存して生成する...")
         self.save_generate_button.setVisible(self.generate_files is not None)
         self.pwc_button = QPushButton("PWC で開く")
+        self.example_button = QPushButton("お手本に追加")
+        self.example_button.setToolTip("表示中のプロンプトを、そのモデルのプロファイルの example_prompts に足します")
+        self.example_button.setVisible(self.add_example is not None)
+        self.example_button.clicked.connect(self._add_current_example)
+        brow.addWidget(self.example_button)
         for b in (self.save_button, self.save_generate_button, self.pwc_button):
             b.setEnabled(False)
             brow.addWidget(b)
@@ -291,6 +298,22 @@ class StoryTab(QWidget):
         self.save_generate_button.clicked.connect(lambda: self.save(generate=True))
         self.pwc_button.clicked.connect(lambda: self.open_in_pwc(self.last_saved[0].parent, self.last_saved))
         self._update_video_widgets()
+
+    def refresh_targets(self):
+        for combo, video in ((self.image_combo, False), (self.video_combo, True)):
+            current = combo.currentText()
+            combo.clear()
+            for name, t in self.targets.items():
+                if t.is_video == video:
+                    combo.addItem(name)
+            if combo.findText(current) >= 0:
+                combo.setCurrentText(current)
+
+    def _add_current_example(self):
+        item = self.current_item()
+        if item is None or item.pending or item.error or self.add_example is None:
+            return
+        self.add_example(item.target.name, self.result_edit.toPlainText())
 
     def _update_omakase_label(self):
         value = self.omakase.value()

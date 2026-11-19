@@ -63,3 +63,17 @@ def read_text(path: Path) -> str:
 
 def has_japanese(text: str) -> bool:
     return any("\u3040" <= ch <= "\u30ff" or "\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def read_prompt_source(path: Path) -> str:
+    """抽出・加工の入力: .txt はそのまま、.png は埋め込まれたプロンプト (SPEC 5.2)。"""
+    if path.suffix.lower() == ".png":
+        from .png_meta import prompt_text
+        text = prompt_text(path)
+        if text is None:
+            raise ValueError("この PNG にはプロンプトが入っていません")
+        return text
+    return read_text(path)

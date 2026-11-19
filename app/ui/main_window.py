@@ -33,6 +33,11 @@ from .extract_tab import ExtractTab
 from .generate_tab import GenerateTab
 from .process_tab import ProcessTab
 from .story_tab import StoryTab
+from .library_tab import LibraryTab
+from .compare_tab import CompareTab
+from .image_tab import ImageTab
+from .profiles_dialog import ProfilesDialog
+from ..core import profiles_io
 from .jobs_bridge import JobsBridge
 from ..gen import prismlab_link, results, text_io
 from ..gen.results_view import ResultsStrip
@@ -40,10 +45,6 @@ from ..gen.results_view import ResultsStrip
 # 一覧に出すファイル (プロンプトと中間表現)
 LIST_SUFFIXES = {".txt", ".json"}
 
-# 作業タブ (名前, 作るフェーズ)
-WORK_TABS = [
-    ("ライブラリ", 5), ("LLM 比較", 5),
-]
 
 
 class MainWindow(QMainWindow):
@@ -140,8 +141,7 @@ class MainWindow(QMainWindow):
         manage_group = QGroupBox("管理")
         manage_bar = QHBoxLayout(manage_group)
         self.profiles_button = QPushButton("プロファイル管理")
-        self.profiles_button.setEnabled(False)
-        self.profiles_button.setToolTip("フェーズ5で作ります")
+        self.profiles_button.setToolTip("モデルプロファイル・LLM プロファイルの一覧・直す・複製・削除・ガイドから下書き")
         manage_bar.addWidget(self.profiles_button)
         tool_row.addWidget(manage_group)
 
@@ -199,7 +199,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.preview_splitter, "プレビュー")
         self.generate_tab = GenerateTab(self.target_profiles, self.queue, self.bridge, self.settings,
                                         lambda: self.folder_edit.text(), self.on_files_saved, self.open_in_pwc,
-                                        self.save_settings, generate_files=self.generate_files)
+                                        self.save_settings, generate_files=self.generate_files,
+                                        add_example=self.add_example)
         self.tabs.addTab(self.generate_tab, "ざっくり生成")
         folder_text = lambda: self.folder_edit.text()  # noqa: E731
         self.extract_tab = ExtractTab(self.queue, self.bridge, self.settings, self.selected_files, folder_text,
@@ -207,16 +208,19 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.extract_tab, "抽出")
         self.process_tab = ProcessTab(self.target_profiles, self.queue, self.bridge, self.router, self.settings,
                                       self.selected_files, folder_text, self.on_files_saved, self.open_in_pwc,
-                                      generate_files=self.generate_files)
+                                      generate_files=self.generate_files, add_example=self.add_example)
         self.tabs.addTab(self.process_tab, "加工")
         self.story_tab = StoryTab(self.target_profiles, self.queue, self.bridge, self.settings, folder_text,
-                                  self.on_files_saved, self.open_in_pwc, generate_files=self.generate_files)
+                                  self.on_files_saved, self.open_in_pwc, generate_files=self.generate_files,
+                                  add_example=self.add_example)
         self.tabs.addTab(self.story_tab, "ストーリー")
-        for name, phase in WORK_TABS:
-            placeholder = QLabel(f"「{name}」はフェーズ{phase}で作ります。")
-            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            placeholder.setStyleSheet(f"color: {style.HINT};")
-            self.tabs.addTab(placeholder, name)
+        self.library_tab = LibraryTab(self.target_profiles, folder_text, self.mix_to_generate)
+        self.tabs.addTab(self.library_tab, "ライブラリ")
+        self.image_tab = ImageTab(self.target_profiles, self.queue, self.bridge, self.router, self.settings, folder_text,
+                                  self.on_files_saved, generate_files=self.generate_files)
+        self.tabs.addTab(self.image_tab, "画像から")
+        self.compare_tab = CompareTab(self.target_profiles, self.llm_profiles, self.queue, self.bridge)
+        self.tabs.addTab(self.compare_tab, "LLM 比較")
         self.splitter.addWidget(self.tabs)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
@@ -248,6 +252,7 @@ class MainWindow(QMainWindow):
         self.open_config_button.clicked.connect(lambda: os.startfile(str(paths.BASE_DIR)))
         self.cancel_button.clicked.connect(self.cancel_jobs)
         self.pwc_button.clicked.connect(self.open_folder_in_pwc)
+        self.profiles_button.clicked.connect(self.open_profiles)
         self.comfy_button.clicked.connect(self.generate_selected)
         self.jobs_button.clicked.connect(self.generation.show_jobs)
         self.comfy_settings_button.clicked.connect(self.generation.show_settings)
@@ -600,6 +605,62 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "PWC で開く", error)
         else:
             self.statusBar().showMessage(f"PromptWordCrafter で開きました: {folder}")
+
+    # ------------------------------------------------------------ プロファイル (SPEC 5.6)
+
+    def open_profiles(self):
+        dialog = ProfilesDialog(self.queue, self.bridge, self.reload_profiles, self)
+        dialog.exec()
+        dialog.deleteLater()
+
+    def reload_profiles(self):
+        """プロファイルのファイルを読み直す。辞書はタブと共有しているので、中身だけ入れ替える。"""
+        targets, warn_t = config.load_target_profiles()
+        llms, warn_l = config.load_llm_profiles()
+        self.target_profiles.clear()
+        self.target_profiles.update(targets)
+        self.llm_profiles.clear()
+        self.llm_profiles.update(llms)
+        self.router.invalidate()
+        for tab in (self.generate_tab, self.process_tab, self.story_tab, self.library_tab, self.image_tab,
+                    self.compare_tab):
+            tab.refresh_targets()
+        self.compare_tab.refresh_llms()
+        notes = warn_t + warn_l
+        self.statusBar().showMessage(" / ".join(notes) if notes else
+                                     f"プロファイルを読み直しました (モデル {len(targets)} 件、LLM {len(llms)} 件)")
+
+    def add_example(self, target_name: str, text: str):
+        """「お手本に追加」: そのモデルのプロファイルの example_prompts に足す (上限を超えるなら確かめる)。"""
+        target = self.target_profiles.get(target_name)
+        if target is None or target.source is None or not text.strip():
+            return
+        limit = int(self.settings.get("example_limit", profiles_io.EXAMPLE_LIMIT))
+        try:
+            added, over = profiles_io.add_example(target.source, text, limit)
+            if not added and over:
+                answer = QMessageBox.question(
+                    self, "お手本に追加",
+                    f"{target_name} のお手本は {limit} 個までです。古いほうから {over} 個消して足しますか?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+                added, over = profiles_io.add_example(target.source, text, limit, drop_oldest=True)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "お手本に追加", f"足せません: {exc}")
+            return
+        if not added:
+            self.statusBar().showMessage(f"{target_name} のお手本に同じ文がもうあります。")
+            return
+        self.reload_profiles()
+        self.statusBar().showMessage(f"{target_name} のお手本に足しました" + (f" (古いもの {over} 個を消しました)" if over else ""))
+
+    def mix_to_generate(self, datas: list, targets: list) -> bool:
+        """ライブラリのミックス: 「ざっくり生成」のタブで各モデル向けに書く。"""
+        if self.generate_tab.start_from_intermediates(datas, targets, name="mix"):
+            self.tabs.setCurrentWidget(self.generate_tab)
+            return True
+        return False
 
     # ------------------------------------------------------------ LLM とジョブ
 

@@ -8,10 +8,11 @@ import threading
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout,
-                               QHeaderView, QInputDialog, QLabel, QMessageBox, QPushButton, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout,
+                               QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox,
+                               QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
+from ..core import config
 from ..core.config import TASKS
 from ..core.job_queue import CANCELLED, DONE, FAILED, RUNNING, Job
 from ..core.llm_client import LLMClient, LLMError
@@ -22,6 +23,97 @@ from . import style
 class _RouteSignals(QObject):
     done = Signal(object)  # [(task, [(name, Health)], 採用名 or "")]
     models = Signal(str, object, str)  # (プロファイル名, モデル一覧, エラー文)
+
+
+# タスクの説明 (画面に出す)
+TASK_LABELS = {
+    "generate": "ざっくり生成 (指示 → 中間表現)",
+    "extract": "抽出",
+    "translate": "翻訳",
+    "render": "モデル向けに書く (ほかのタスクの予備にもなる)",
+    "enhance": "盛る・整える",
+    "negative": "ネガティブを作る",
+    "story_plan": "ストーリーの質問・計画・シーン",
+    "image_to_prompt": "画像から (画像を見られる LLM だけ)",
+    "profile_draft": "ガイドから下書き",
+}
+VISION_TASKS = {"image_to_prompt"}
+
+
+class RoutingDialog(QDialog):
+    """1 つのタスクの候補を選んで並べる。上から順に試す。"""
+
+    def __init__(self, task: str, current: list[str], profiles, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"割り当てを変える: {task}")
+        self.resize(520, 440)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(f"{task} — {TASK_LABELS.get(task, '')}"))
+        hint = QLabel("使う LLM にチェックを付け、上から試す順に並べてください。上の LLM が止まっているときや "
+                      "ComfyUI が生成中のときは、次の LLM に回します。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {style.HINT};")
+        layout.addWidget(hint)
+        self.list = QListWidget()
+        names = [n for n in current if n in profiles] + [n for n in profiles if n not in current]
+        for name in names:
+            item = QListWidgetItem(name)
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            usable = task not in VISION_TASKS or profiles[name].supports_vision
+            if usable:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked if name in current else Qt.CheckState.Unchecked)
+            else:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsUserCheckable)
+                item.setText(f"{name}  (画像を見られません)")
+            self.list.addItem(item)
+        missing = [n for n in current if n not in profiles]
+        layout.addWidget(self.list, 1)
+        if missing:
+            note = QLabel("プロファイルがないので外します: " + ", ".join(missing))
+            note.setStyleSheet(f"color: {style.WARN};")
+            layout.addWidget(note)
+        row = QHBoxLayout()
+        self.up_button = QPushButton("↑ 上へ")
+        self.down_button = QPushButton("↓ 下へ")
+        row.addWidget(self.up_button)
+        row.addWidget(self.down_button)
+        row.addStretch(1)
+        layout.addLayout(row)
+        self.all_tasks = QCheckBox("ほかのタスクも全部これにする" + (" (画像からは除く)" if task not in VISION_TASKS else ""))
+        self.all_tasks.setVisible(task not in VISION_TASKS)
+        layout.addWidget(self.all_tasks)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("保存")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("やめる")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.up_button.clicked.connect(lambda: self.move(-1))
+        self.down_button.clicked.connect(lambda: self.move(1))
+
+    def move(self, step: int):
+        row = self.list.currentRow()
+        to = row + step
+        if row < 0 or not 0 <= to < self.list.count():
+            return
+        item = self.list.takeItem(row)
+        self.list.insertItem(to, item)
+        self.list.setCurrentRow(to)
+
+    def chosen(self) -> list[str]:
+        out = []
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if item.flags() & Qt.ItemFlag.ItemIsUserCheckable and item.checkState() == Qt.CheckState.Checked:
+                out.append(item.data(Qt.ItemDataRole.UserRole))
+        return out
+
+    def accept(self):
+        if not self.chosen():
+            QMessageBox.information(self, "割り当てを変える", "LLM を 1 つ以上チェックしてください。")
+            return
+        super().accept()
 
 
 class ConnectionDialog(QDialog):
@@ -77,17 +169,19 @@ class ConnectionDialog(QDialog):
         self.route_table = QTableWidget(len(TASKS), 3)
         self.route_table.setHorizontalHeaderLabels(["タスク", "候補 (上から順に試す)", "採用"])
         self.route_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.route_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.route_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.route_table.verticalHeader().setVisible(False)
         rheader = self.route_table.horizontalHeader()
         rheader.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         rheader.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         rheader.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        for row, task in enumerate(TASKS):
-            self.route_table.setItem(row, 0, QTableWidgetItem(task))
-            self.route_table.setItem(row, 1, QTableWidgetItem(" → ".join(router.candidates(task))))
-            self.route_table.setItem(row, 2, QTableWidgetItem(""))
+        self._fill_routes()
         route_layout.addWidget(self.route_table)
         route_buttons = QHBoxLayout()
+        self.edit_route_button = QPushButton("割り当てを変える...")
+        self.edit_route_button.setToolTip("選んだタスクで使う LLM と、試す順を選びます (行をダブルクリックしても開きます)")
+        route_buttons.addWidget(self.edit_route_button)
         self.route_button = QPushButton("割り当てを確かめる")
         self.route_button.setToolTip("各候補の /models と、同じ PC の ComfyUI の /queue を問い合わせ直します")
         route_buttons.addWidget(self.route_button)
@@ -105,6 +199,8 @@ class ConnectionDialog(QDialog):
         self.cancel_button.clicked.connect(self.cancel_tests)
         self.route_button.clicked.connect(self.check_routes)
         self.model_button.clicked.connect(self.change_model)
+        self.edit_route_button.clicked.connect(self.edit_route)
+        self.route_table.cellDoubleClicked.connect(lambda row, _col: self.edit_route(row))
         bridge.event.connect(self.on_job_event)
         self._route_signals = _RouteSignals()
         self._route_signals.done.connect(self.on_routes_checked)
@@ -242,6 +338,41 @@ class ConnectionDialog(QDialog):
         self._set_result(row, f"モデルを {model} にしました", style.OK)
 
     # ------------------------------------------------------------ タスク割り当て
+
+    def _fill_routes(self):
+        for row, task in enumerate(TASKS):
+            name = QTableWidgetItem(task)
+            name.setToolTip(TASK_LABELS.get(task, ""))
+            self.route_table.setItem(row, 0, name)
+            self.route_table.setItem(row, 1, QTableWidgetItem(" → ".join(self.router.candidates(task))))
+            self.route_table.setItem(row, 2, QTableWidgetItem(""))
+
+    def edit_route(self, row: int = -1):
+        if row is False or row < 0:
+            row = self.route_table.currentRow()
+        if not 0 <= row < len(TASKS):
+            QMessageBox.information(self, "割り当てを変える", "下の表でタスクを選んでください。")
+            return
+        task = TASKS[row]
+        dialog = RoutingDialog(task, self.router.candidates(task), self.profiles, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        names = dialog.chosen()
+        settings = self.router.settings
+        routing = settings.setdefault("task_routing", {})
+        targets = [task]
+        if dialog.all_tasks.isChecked():
+            targets = [t for t in TASKS if t not in VISION_TASKS]
+        for t in targets:
+            routing[t] = list(names)
+        try:
+            config.save_settings(settings)
+        except OSError as exc:
+            QMessageBox.warning(self, "割り当てを変える", f"保存できません: {exc}")
+            return
+        self.router.invalidate()
+        self._fill_routes()
+        log.info(f"タスク割り当てを変えました: {', '.join(targets)} → {' → '.join(names)}")
 
     def check_routes(self):
         self.route_button.setEnabled(False)

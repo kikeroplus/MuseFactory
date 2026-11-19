@@ -52,9 +52,11 @@ class ProcessTab(QWidget):
     def __init__(self, targets: dict[str, TargetProfile], queue, bridge, router, settings: dict,
                  selected_in_main: Callable[[], list[Path]], current_folder: Callable[[], str],
                  on_saved: Callable[[list[Path]], None], open_in_pwc: Callable[[Path, list[Path]], None],
-                 generate_files: Optional[Callable[[list[Path]], None]] = None, parent=None):
+                 generate_files: Optional[Callable[[list[Path]], None]] = None,
+                 add_example: Optional[Callable[[str, str], None]] = None, parent=None):
         super().__init__(parent)
         self.targets = targets
+        self.add_example = add_example
         self.queue = queue
         self.router = router
         self.settings = settings
@@ -124,6 +126,11 @@ class ProcessTab(QWidget):
         self.save_generate_button.setEnabled(False)
         self.save_generate_button.setVisible(self.generate_files is not None)
         bottom.addWidget(self.save_generate_button)
+        self.example_button = QPushButton("お手本に追加")
+        self.example_button.setToolTip("表示中の変更後の文を、対象モデルのプロファイルの example_prompts に足します")
+        self.example_button.setVisible(self.add_example is not None)
+        self.example_button.clicked.connect(self._add_current_example)
+        bottom.addWidget(self.example_button)
         self.pwc_button = QPushButton("PWC で開く")
         self.pwc_button.setEnabled(False)
         self.pwc_button.setToolTip("最後に保存したファイルのフォルダを PromptWordCrafter で開きます")
@@ -139,6 +146,15 @@ class ProcessTab(QWidget):
         self.save_generate_button.clicked.connect(lambda: self.save(generate=True))
         self.pwc_button.clicked.connect(lambda: self.open_in_pwc(self.last_saved[0].parent, self.last_saved))
         self._on_op_changed()
+
+    def refresh_targets(self):
+        self._on_op_changed()
+
+    def _add_current_example(self):
+        item = self.current_item()
+        if item is None or item.pending or item.error or self._target is None or self._op == "negative":
+            return
+        self.add_example(self._target.name, self.diff.text())
 
     def op(self) -> str:
         return self.op_combo.currentData()
@@ -211,7 +227,7 @@ class ProcessTab(QWidget):
 
         def run(profile, token) -> ProcessResult:
             token.check()
-            text = files.read_text(path).strip()
+            text = files.read_prompt_source(path).strip()
             result = ProcessResult(path, before=text, pending=False)
             if op == "translate":
                 if not text:
