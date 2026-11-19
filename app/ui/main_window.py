@@ -24,7 +24,9 @@ from ..util import files
 from . import style
 from ..core import pwc_link
 from .connection_dialog import ConnectionDialog
+from .extract_tab import ExtractTab
 from .generate_tab import GenerateTab
+from .process_tab import ProcessTab
 from .jobs_bridge import JobsBridge
 
 # 一覧に出すファイル (プロンプトと中間表現)
@@ -32,7 +34,7 @@ LIST_SUFFIXES = {".txt", ".json"}
 
 # 作業タブ (名前, 作るフェーズ)
 WORK_TABS = [
-    ("抽出", 3), ("加工", 3), ("ストーリー", 4), ("ライブラリ", 5), ("LLM 比較", 5),
+    ("ストーリー", 4), ("ライブラリ", 5), ("LLM 比較", 5),
 ]
 
 
@@ -155,6 +157,13 @@ class MainWindow(QMainWindow):
                                         lambda: self.folder_edit.text(), self.on_files_saved, self.open_in_pwc,
                                         self.save_settings)
         self.tabs.addTab(self.generate_tab, "ざっくり生成")
+        folder_text = lambda: self.folder_edit.text()  # noqa: E731
+        self.extract_tab = ExtractTab(self.queue, self.bridge, self.settings, self.selected_files, folder_text,
+                                      self.on_files_saved)
+        self.tabs.addTab(self.extract_tab, "抽出")
+        self.process_tab = ProcessTab(self.target_profiles, self.queue, self.bridge, self.router, self.settings,
+                                      self.selected_files, folder_text, self.on_files_saved, self.open_in_pwc)
+        self.tabs.addTab(self.process_tab, "加工")
         for name, phase in WORK_TABS:
             placeholder = QLabel(f"「{name}」はフェーズ{phase}で作ります。")
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -279,15 +288,17 @@ class MainWindow(QMainWindow):
             self.preview.setPlainText(f"(読めません: {exc})")
         self.tabs.setCurrentWidget(self.preview)
 
+    def selected_files(self) -> list[Path]:
+        return [Path(i.data(Qt.ItemDataRole.UserRole)) for i in self.file_list.selectedItems()]
+
     def on_files_saved(self, saved: list[Path]):
         """作業タブで保存したら、そのフォルダを表示していれば一覧を読み直す。"""
         if not saved:
             return
-        folder = saved[0].parent
         current = Path(self.folder_edit.text().strip())
-        if current.is_dir() and current.resolve() == folder.resolve():
+        if current.is_dir() and any(p.parent.resolve() == current.resolve() for p in saved):
             self.load_folder()
-        self.statusBar().showMessage(f"{len(saved)} 件を保存しました: {folder}")
+        self.statusBar().showMessage(f"{len(saved)} 件を保存しました: {saved[0].parent}")
 
     def save_settings(self):
         try:
@@ -302,8 +313,7 @@ class MainWindow(QMainWindow):
         if not folder.is_dir():
             self.statusBar().showMessage("フォルダ欄にフォルダを入れてください。")
             return
-        selected = [Path(i.data(Qt.ItemDataRole.UserRole)) for i in self.file_list.selectedItems()]
-        self.open_in_pwc(folder, [p for p in selected if p.suffix.lower() == ".txt"])
+        self.open_in_pwc(folder, [p for p in self.selected_files() if p.suffix.lower() == ".txt"])
 
     def open_in_pwc(self, folder: Path, select: list[Path]):
         error = pwc_link.open_in_pwc(folder, select)

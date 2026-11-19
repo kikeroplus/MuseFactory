@@ -1,0 +1,6 @@
+[short]
+Keep it to one simple, small movement and at most one camera move.
+[medium]
+Use two or three connected movements and one smooth camera move.
+[long]
+Build a small sequence of four or more movements with a clear beginning, middle and end, and one or two camera moves.

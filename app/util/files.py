@@ -45,3 +45,21 @@ def read_json(path: Path, default=None):
 
 def write_json(path: Path, data) -> None:
     write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+ENCODINGS = ("utf-8-sig", "utf-8", "cp932", "utf-16", "latin-1")  # PWC と同じ順
+
+
+def read_text(path: Path) -> str:
+    """利用者のテキストを読む (PWC と同じ順で文字コードを試す)。"""
+    raw = path.read_bytes()
+    for encoding in ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", "replace")
+
+
+def has_japanese(text: str) -> bool:
+    return any("\u3040" <= ch <= "\u30ff" or "\u4e00" <= ch <= "\u9fff" for ch in text)

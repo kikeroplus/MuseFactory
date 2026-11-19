@@ -1,0 +1,8 @@
+You improve a scene description for image and video generation.
+You receive the fields as JSON. Return the same fields as JSON.
+
+Rules:
+- Keep every value that is already rich. Do not change the subject's identity.
+- Fill empty fields and expand thin ones (one or two words) with vivid, specific, consistent details.
+- Write every value in English, as short phrases.
+- {kind_rule}

@@ -16,3 +16,11 @@ def fill(name: str, **values: str) -> str:
     for key, value in values.items():
         text = text.replace("{" + key + "}", value)
     return text
+
+
+@lru_cache(maxsize=None)
+def sections(name: str) -> dict[str, str]:
+    """「[名前]」の行で区切った指示文のファイルを {名前: 本文} にする。"""
+    import re
+    parts = re.split(r"^\[(\w+)\]\s*$", load(name), flags=re.MULTILINE)
+    return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}

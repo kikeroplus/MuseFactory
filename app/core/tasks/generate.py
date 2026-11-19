@@ -4,18 +4,12 @@
 おまかせ度 (0〜100) は temperature と「指示にない要素をどこまで補うか」の指示文に反映する。
 """
 
-import re
-from functools import lru_cache
-
 from .. import intermediate, prompts
 from ..llm_client import LLMClient
 
 
-@lru_cache(maxsize=None)
 def _levels() -> dict[str, str]:
-    text = prompts.load("generate_levels")
-    parts = re.split(r"^\[(\w+)\]\s*$", text, flags=re.MULTILINE)
-    return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}
+    return prompts.sections("generate_levels")
 
 
 def temperature_for(omakase: int) -> float:
