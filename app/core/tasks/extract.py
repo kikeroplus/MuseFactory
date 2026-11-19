@@ -1,6 +1,7 @@
 """5.2 抽出の書き出し。分解 (process.decompose) の結果から、選んだ要素だけを出す。
 
 - 要素ごとに 1 ファイル: (元の名前)_extract_(要素).txt
+- 元のファイルごとに 1 ファイル: (元の名前)_extract_(要素)_(要素).txt に、選んだ要素を ", " でつないだ 1 行
 - ワイルドカード形式: 要素ごとに全ファイル分を 1 行 1 項目で (要素).txt。完全に同じ行は 1 つにする
 - パーツライブラリに登録
 - 削除する要素 (取り出すの反対。2026-11-19 利用者の希望): 元の文から選んだ要素のところだけを消し
@@ -41,6 +42,25 @@ def write_per_element(results: list[Extracted], elements: list[str], folder: Pat
             path = files.unique_path(folder / f"{files.safe_name(result.source.stem)}_extract_{element}.txt")
             files.write_text_atomic(path, text + "\n")
             written.append(path)
+    return written
+
+
+def per_source_name(source: Path, elements: list[str]) -> str:
+    return f"{files.safe_name(source.stem)}_extract_{'_'.join(elements)}.txt"
+
+
+def write_per_source(results: list[Extracted], elements: list[str], folder: Path) -> list[Path]:
+    """元のファイルごとに 1 ファイル。選んだ要素の値を要素の順に ", " でつないだ 1 行 (空の要素は飛ばす。
+    全部空なら書かない)。2026-11-20 利用者の希望。"""
+    written = []
+    for result in results:
+        parts = [" ".join(result.data.get(element, "").split()) for element in elements]
+        text = ", ".join(p for p in parts if p)
+        if not text:
+            continue
+        path = files.unique_path(folder / per_source_name(result.source, elements))
+        files.write_text_atomic(path, text + "\n")
+        written.append(path)
     return written
 
 

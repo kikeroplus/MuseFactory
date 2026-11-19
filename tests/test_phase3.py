@@ -13,7 +13,7 @@ from app.core.job_queue import CANCELLED, DONE, Job, JobQueue
 from app.core.llm_client import LLMClient
 from app.core.tasks import process
 from app.core.tasks.extract import (REMOVED, Extracted, add_to_library, delete_phrases, remove_elements,
-                                    write_per_element, write_removed, write_wildcards)
+                                    write_per_element, write_per_source, write_removed, write_wildcards)
 from app.ui.common import diff_ranges
 from app.util import files, log
 from tests.fake_server import FakeServer
@@ -124,6 +124,16 @@ class ExtractTest(Base):
              Extracted(Path("z.txt"), {"pose": "Standing"})]
         path = write_wildcards(r, ["pose"], self.folder / "w")[0]
         self.assertEqual(path.read_text(encoding="utf-8"), "standing\nStanding\n")
+
+    def test_per_source(self):
+        r = [Extracted(Path("a.txt"), {"pose": "standing", "expression": " smiling ", "outfit": "dress"}),
+             Extracted(Path("b.txt"), {"pose": "", "expression": "crying"}),
+             Extracted(Path("c.txt"), {"pose": "", "expression": ""})]
+        out = self.folder / "s"
+        paths = write_per_source(r, ["pose", "expression"], out)
+        self.assertEqual([p.name for p in paths], ["a_extract_pose_expression.txt", "b_extract_pose_expression.txt"])
+        self.assertEqual(paths[0].read_text(encoding="utf-8"), "standing, smiling\n")
+        self.assertEqual(paths[1].read_text(encoding="utf-8"), "crying\n")
 
     def test_library(self):
         lib = self.folder / "lib"

@@ -20,7 +20,7 @@ from ..core.job_queue import CANCELLED, DONE, Job
 from ..core.llm_client import LLMClient
 from ..core.tasks import process
 from ..core.tasks.extract import (REMOVED, Extracted, add_to_library, remove_elements, removed_name,
-                                  write_per_element, write_removed, write_wildcards)
+                                  write_per_element, write_per_source, write_removed, write_wildcards)
 from ..util import files
 from . import style
 from .common import FolderRow, InputFilesBox
@@ -85,6 +85,8 @@ class ExtractTab(QWidget):
         self.per_element_check = QCheckBox("要素ごとに 1 ファイル")
         self.per_element_check.setToolTip("(元の名前)_extract_(要素).txt に書き出します")
         self.per_element_check.setChecked(True)
+        self.per_source_check = QCheckBox("元のファイルごとに 1 ファイル")
+        self.per_source_check.setToolTip("(元の名前)_extract_(要素)_(要素).txt に、選んだ要素を \", \" でつないで書き出します")
         self.wildcard_check = QCheckBox("ワイルドカード形式")
         self.wildcard_check.setToolTip("(要素).txt に 1 行 1 項目でまとめます。同じ行は 1 つにします")
         self.wildcard_check.setChecked(True)
@@ -92,7 +94,7 @@ class ExtractTab(QWidget):
         self.use_existing_check = QCheckBox("保存した中間表現を使う")
         self.use_existing_check.setToolTip("MuseFactory で作ったファイルは、保存した中間表現を使います (LLM に頼みません)")
         self.use_existing_check.setChecked(True)
-        for w in (self.per_element_check, self.wildcard_check, self.library_check, self.use_existing_check):
+        for w in (self.per_element_check, self.per_source_check, self.wildcard_check, self.library_check, self.use_existing_check):
             ov.addWidget(w)
         self.out_folder = FolderRow("出力フォルダ", "空なら フォルダ欄のフォルダ\\extract")
         ov.addWidget(self.out_folder)
@@ -261,7 +263,8 @@ class ExtractTab(QWidget):
 
     def save(self):
         if self.columns and not self.removing and not (
-                self.per_element_check.isChecked() or self.wildcard_check.isChecked() or self.library_check.isChecked()):
+                self.per_element_check.isChecked() or self.per_source_check.isChecked()
+                or self.wildcard_check.isChecked() or self.library_check.isChecked()):
             QMessageBox.information(self, "抽出", "書き出し方を 1 つ以上チェックしてください。")
             return
         results = self.edited_results()
@@ -277,6 +280,10 @@ class ExtractTab(QWidget):
                 paths = write_per_element(results, self.columns, folder)
                 written += paths
                 notes.append(f"要素ごと {len(paths)} ファイル")
+            if self.columns and self.per_source_check.isChecked():
+                paths = write_per_source(results, self.columns, folder)
+                written += paths
+                notes.append(f"元のファイルごと {len(paths)} ファイル")
             if self.columns and self.wildcard_check.isChecked():
                 paths = write_wildcards(results, self.columns, folder)
                 written += paths
