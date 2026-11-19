@@ -59,7 +59,8 @@ class ExtractTab(QWidget):
         grid = QGridLayout(element_box)
         self.element_checks: dict[str, QCheckBox] = {}
         for i, name in enumerate(intermediate.ELEMENTS):
-            check = QCheckBox(f"{ELEMENT_LABELS.get(name, name)} ({name})")
+            check = QCheckBox(ELEMENT_LABELS.get(name, name))
+            check.setToolTip(name)
             check.setChecked(name in ("pose", "expression"))
             self.element_checks[name] = check
             grid.addWidget(check, i % 5, i // 5)
@@ -72,19 +73,24 @@ class ExtractTab(QWidget):
         rgrid = QGridLayout(remove_box)
         self.remove_checks: dict[str, QCheckBox] = {}
         for i, name in enumerate(intermediate.ELEMENTS):
-            check = QCheckBox(f"{ELEMENT_LABELS.get(name, name)} ({name})")
+            check = QCheckBox(ELEMENT_LABELS.get(name, name))
+            check.setToolTip(name)
             self.remove_checks[name] = check
             rgrid.addWidget(check, i % 5, i // 5)
         top.addWidget(remove_box, 3)
 
         out_box = QGroupBox("書き出し")
         ov = QVBoxLayout(out_box)
-        self.per_element_check = QCheckBox("要素ごとに 1 ファイル ((元の名前)_extract_(要素).txt)")
+        # 説明は乗せたときに出す (長い文を並べると、作業窓が縮まなくなる)
+        self.per_element_check = QCheckBox("要素ごとに 1 ファイル")
+        self.per_element_check.setToolTip("(元の名前)_extract_(要素).txt に書き出します")
         self.per_element_check.setChecked(True)
-        self.wildcard_check = QCheckBox("ワイルドカード形式 ((要素).txt に 1 行 1 項目。同じ行は 1 つに)")
+        self.wildcard_check = QCheckBox("ワイルドカード形式")
+        self.wildcard_check.setToolTip("(要素).txt に 1 行 1 項目でまとめます。同じ行は 1 つにします")
         self.wildcard_check.setChecked(True)
         self.library_check = QCheckBox("パーツライブラリに登録")
-        self.use_existing_check = QCheckBox("MuseFactory で作ったファイルは保存した中間表現を使う (LLM に頼まない)")
+        self.use_existing_check = QCheckBox("保存した中間表現を使う")
+        self.use_existing_check.setToolTip("MuseFactory で作ったファイルは、保存した中間表現を使います (LLM に頼みません)")
         self.use_existing_check.setChecked(True)
         for w in (self.per_element_check, self.wildcard_check, self.library_check, self.use_existing_check):
             ov.addWidget(w)

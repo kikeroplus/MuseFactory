@@ -18,7 +18,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFileSystemModel, QGroupBox, QHBoxLayout,
                                QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-                               QSplitter, QTabWidget, QTreeView, QVBoxLayout, QWidget)
+                               QScrollArea, QSplitter, QTabWidget, QTreeView, QVBoxLayout, QWidget)
 from gencommon.generation import GenerationController
 from gencommon.translation import TranslationController
 
@@ -42,6 +42,8 @@ from ..core import profiles_io
 from .jobs_bridge import JobsBridge
 from ..gen import prismlab_link, results, text_io
 from ..gen.results_view import ResultsStrip
+
+MIN_PANE_WIDTH = 120  # フォルダ・テキストの窓の、これより狭くしない幅
 
 # 一覧に出すファイル (プロンプトと中間表現)
 LIST_SUFFIXES = {".txt", ".json"}
@@ -191,6 +193,7 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.file_list)
 
         self.tabs = QTabWidget()
+        self._work_areas: dict = {}  # 作業タブの中身 → それを入れたスクロールの枠
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setPlaceholderText("ファイル一覧で選んだファイルの中身を表示します")
@@ -211,30 +214,34 @@ class MainWindow(QMainWindow):
                                         lambda: self.folder_edit.text(), self.on_files_saved, self.open_in_pwc,
                                         self.save_settings, generate_files=self.generate_files,
                                         add_example=self.add_example)
-        self.tabs.addTab(self.generate_tab, "ざっくり生成")
+        self._add_work_tab(self.generate_tab, "ざっくり生成")
         folder_text = lambda: self.folder_edit.text()  # noqa: E731
         self.extract_tab = ExtractTab(self.queue, self.bridge, self.settings, self.selected_files, folder_text,
                                       self.on_files_saved)
-        self.tabs.addTab(self.extract_tab, "抽出")
+        self._add_work_tab(self.extract_tab, "抽出")
         self.process_tab = ProcessTab(self.target_profiles, self.queue, self.bridge, self.router, self.settings,
                                       self.selected_files, folder_text, self.on_files_saved, self.open_in_pwc,
                                       generate_files=self.generate_files, add_example=self.add_example)
-        self.tabs.addTab(self.process_tab, "加工")
+        self._add_work_tab(self.process_tab, "加工")
         self.story_tab = StoryTab(self.target_profiles, self.queue, self.bridge, self.settings, folder_text,
                                   self.on_files_saved, self.open_in_pwc, generate_files=self.generate_files,
                                   add_example=self.add_example)
-        self.tabs.addTab(self.story_tab, "ストーリー")
+        self._add_work_tab(self.story_tab, "ストーリー")
         self.library_tab = LibraryTab(self.target_profiles, folder_text, self.mix_to_generate)
-        self.tabs.addTab(self.library_tab, "ライブラリ")
+        self._add_work_tab(self.library_tab, "ライブラリ")
         self.image_tab = ImageTab(self.target_profiles, self.queue, self.bridge, self.router, self.settings, folder_text,
                                   self.on_files_saved, generate_files=self.generate_files)
-        self.tabs.addTab(self.image_tab, "画像から")
+        self._add_work_tab(self.image_tab, "画像から")
         self.compare_tab = CompareTab(self.target_profiles, self.llm_profiles, self.queue, self.bridge)
-        self.tabs.addTab(self.compare_tab, "LLM 比較")
+        self._add_work_tab(self.compare_tab, "LLM 比較")
         self.splitter.addWidget(self.tabs)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setStretchFactor(2, 4)
+        for i in range(3):  # どの窓も 0 まで畳まない (畳むと仕切りが端に寄って戻しにくい)
+            self.splitter.setCollapsible(i, False)
+        self.folder_tree.setMinimumWidth(MIN_PANE_WIDTH)
+        self.file_list.setMinimumWidth(MIN_PANE_WIDTH)
         root.addWidget(self.splitter, 1)
 
         # ステータスバー (右: 実行中・進み具合・キャンセル)
@@ -287,8 +294,11 @@ class MainWindow(QMainWindow):
         if not restored or (screen is not None and not screen.intersects(self.frameGeometry())):
             self.resize(1400, 860)
         sizes = self.ui_state.get("splitter")
-        if isinstance(sizes, list) and len(sizes) == 3:
-            self.splitter.setSizes([int(s) for s in sizes])
+        if isinstance(sizes, list) and len(sizes) == 3 and all(isinstance(s, (int, float)) for s in sizes):
+            # 前に作業窓が縮まずに押しつぶされた幅 (58 など) が残っていたら、既定の幅に戻す
+            folder, text, work = (int(s) for s in sizes)
+            self.splitter.setSizes([folder if folder >= MIN_PANE_WIDTH else 240,
+                                    text if text >= MIN_PANE_WIDTH else 260, max(work, 300)])
         else:
             self.splitter.setSizes([240, 260, 900])
 
@@ -706,10 +716,21 @@ class MainWindow(QMainWindow):
         self.reload_profiles()
         self.statusBar().showMessage(f"{target_name} のお手本に足しました" + (f" (古いもの {over} 個を消しました)" if over else ""))
 
+    def _add_work_tab(self, page: QWidget, title: str) -> None:
+        """作業タブを足す。中身はスクロールの枠に入れる: 作業窓が中身より狭くなったらスクロールにして、
+        作業窓そのものは縮められるようにする (でないと、いちばん広いタブの幅より縮まず、
+        フォルダとテキストの窓が押しつぶされて仕切りが動かせなくなる)。"""
+        area = QScrollArea()
+        area.setWidget(page)
+        area.setWidgetResizable(True)
+        area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._work_areas[page] = area  # タブを前に出すときは、この枠を選ぶ
+        self.tabs.addTab(area, title)
+
     def mix_to_generate(self, datas: list, targets: list) -> bool:
         """ライブラリのミックス: 「ざっくり生成」のタブで各モデル向けに書く。"""
         if self.generate_tab.start_from_intermediates(datas, targets, name="mix"):
-            self.tabs.setCurrentWidget(self.generate_tab)
+            self.tabs.setCurrentWidget(self._work_areas[self.generate_tab])
             return True
         return False
 
