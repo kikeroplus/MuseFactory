@@ -51,7 +51,8 @@ class ProcessResult:
 class ProcessTab(QWidget):
     def __init__(self, targets: dict[str, TargetProfile], queue, bridge, router, settings: dict,
                  selected_in_main: Callable[[], list[Path]], current_folder: Callable[[], str],
-                 on_saved: Callable[[list[Path]], None], open_in_pwc: Callable[[Path, list[Path]], None], parent=None):
+                 on_saved: Callable[[list[Path]], None], open_in_pwc: Callable[[Path, list[Path]], None],
+                 generate_files: Optional[Callable[[list[Path]], None]] = None, parent=None):
         super().__init__(parent)
         self.targets = targets
         self.queue = queue
@@ -59,6 +60,7 @@ class ProcessTab(QWidget):
         self.settings = settings
         self.on_saved = on_saved
         self.open_in_pwc = open_in_pwc
+        self.generate_files = generate_files
         self.items: list[ProcessResult] = []
         self._job_item: dict[int, ProcessResult] = {}
         self._batch = None
@@ -117,6 +119,11 @@ class ProcessTab(QWidget):
         self.save_button = QPushButton("チェックしたものを保存")
         self.save_button.setEnabled(False)
         bottom.addWidget(self.save_button)
+        self.save_generate_button = QPushButton("保存して生成する...")
+        self.save_generate_button.setToolTip("チェックしたものを保存し、そのファイルで ComfyUI の生成の画面を開きます (ネガティブ生成では使えません)")
+        self.save_generate_button.setEnabled(False)
+        self.save_generate_button.setVisible(self.generate_files is not None)
+        bottom.addWidget(self.save_generate_button)
         self.pwc_button = QPushButton("PWC で開く")
         self.pwc_button.setEnabled(False)
         self.pwc_button.setToolTip("最後に保存したファイルのフォルダを PromptWordCrafter で開きます")
@@ -128,7 +135,8 @@ class ProcessTab(QWidget):
         self.result_list.currentRowChanged.connect(self.show_item)
         self.result_list.itemChanged.connect(self._on_checked)
         self.diff.edited.connect(self._on_edited)
-        self.save_button.clicked.connect(self.save)
+        self.save_button.clicked.connect(lambda: self.save())
+        self.save_generate_button.clicked.connect(lambda: self.save(generate=True))
         self.pwc_button.clicked.connect(lambda: self.open_in_pwc(self.last_saved[0].parent, self.last_saved))
         self._on_op_changed()
 
@@ -325,11 +333,12 @@ class ProcessTab(QWidget):
         self.run_button.setEnabled(not busy)
         self.run_button.setText("加工中…" if busy else "加工する")
         self.save_button.setEnabled(not busy and any(not i.pending and not i.error for i in self.items))
+        self.save_generate_button.setEnabled(self.save_button.isEnabled() and self._op != "negative")
         self.pwc_button.setEnabled(bool(self.last_saved))
 
     # ------------------------------------------------------------ 保存
 
-    def save(self):
+    def save(self, generate: bool = False):
         items = [i for i in self.items if i.checked and not i.pending and not i.error and i.after.strip()]
         if not items:
             QMessageBox.information(self, "加工", "保存するものにチェックを付けてください。")
@@ -372,3 +381,5 @@ class ProcessTab(QWidget):
             self._update_buttons()
             self.on_saved(saved)
             self.summary.setText(f"{len(saved)} 件を保存しました")
+            if generate and self.generate_files is not None and self.last_saved:
+                self.generate_files(self.last_saved)

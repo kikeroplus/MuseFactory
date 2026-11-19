@@ -8,6 +8,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 
 from .core import config
+from .gen import profile as gen_profile
 from .ui.main_window import MainWindow
 
 SERVER_NAME = f"MuseFactory-{getpass.getuser()}"
@@ -53,6 +54,12 @@ def main():
     if _notify_running_instance():
         sys.exit(0)
     notes = []
+    try:
+        merged = gen_profile.setup()  # 生成の設定の置き場所を決める (GenCommon。PWC などと共有)
+        if merged:
+            notes.append("共有の設定: " + "。".join(merged))
+    except Exception as exc:  # noqa: BLE001 - 生成が使えなくても LLM の機能は使えるように
+        notes.append(f"生成の設定を読めません: {exc}")
     try:
         config.ensure_settings_file()  # 初回は既定の設定ファイルを書いておく
     except OSError as exc:

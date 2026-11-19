@@ -3,18 +3,23 @@
 上: 出力フォルダの欄 → 機能ごとのグループ
 本体: フォルダツリー | ファイル一覧 | 作業タブ (機能ごと。フェーズごとに中身を作る)
 下: ステータスバー (左に直前の結果、右に「実行中: タスク / LLM プロファイル」・進み具合・キャンセル)
+
+画像・動画の生成 (ComfyUI) は PWC と同じ共通部品 (GenCommon) で行う (SPEC 5.10)。
+テキストファイル 1 つが 1 本のプロンプト。結果はプレビューの下の帯に出す。
 """
 
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QByteArray, QDir, Qt
+from PySide6.QtCore import QByteArray, QDir, QEvent, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QFileDialog, QFileSystemModel, QGroupBox, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QFileDialog, QFileSystemModel, QGroupBox, QHBoxLayout,
                                QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
+                               QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
                                QSplitter, QTabWidget, QTreeView, QVBoxLayout, QWidget)
+from gencommon.generation import GenerationController
 
 from .. import paths
 from ..core import config
@@ -28,6 +33,8 @@ from .extract_tab import ExtractTab
 from .generate_tab import GenerateTab
 from .process_tab import ProcessTab
 from .jobs_bridge import JobsBridge
+from ..gen import prismlab_link, results, text_io
+from ..gen.results_view import ResultsStrip
 
 # 一覧に出すファイル (プロンプトと中間表現)
 LIST_SUFFIXES = {".txt", ".json"}
@@ -60,6 +67,7 @@ class MainWindow(QMainWindow):
         self.bridge.event.connect(self.on_job_event)
         self._connection_dialog: Optional[ConnectionDialog] = None
         self.current_path: Optional[Path] = None
+        self.generation = GenerationController(self, self.prompt_text_for, self.statusBar().showMessage)
 
         self._build_ui()
         self._connect_signals()
@@ -73,6 +81,8 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage(
                 f"LLM プロファイル {len(self.llm_profiles)} 件、モデルプロファイル {len(self.target_profiles)} 件を読みました。")
+        # 前回終わらなかった生成ジョブは、ウィンドウが出てから聞く
+        QTimer.singleShot(0, self.generation.offer_resume)
 
     # ------------------------------------------------------------ 画面
 
@@ -109,6 +119,23 @@ class MainWindow(QMainWindow):
         llm_bar.addWidget(self.open_config_button)
         tool_row.addWidget(llm_group)
 
+        # 生成 (ComfyUI) グループ: 生成する | 生成ジョブ | 生成の設定 (generation-standard 9 章の並び)
+        generate_group = QGroupBox("生成 (ComfyUI)")
+        generate_bar = QHBoxLayout(generate_group)
+        self.comfy_button = QPushButton("生成する")
+        self.comfy_button.setToolTip("一覧で選んでいるテキストファイル (なければ表示中のもの) の本文で、ComfyUI で生成します")
+        generate_bar.addWidget(self.comfy_button)
+        self.jobs_button = QPushButton("生成ジョブ")
+        self.jobs_button.setToolTip("生成ジョブの一覧 (Ctrl+J)")
+        generate_bar.addWidget(self.jobs_button)
+        self.comfy_settings_button = QPushButton("生成の設定")
+        self.comfy_settings_button.setToolTip("接続先・ワークフロー・エンハンサーなど (PromptWordCrafter・J-Rate・ImageMimicArt と共有)")
+        generate_bar.addWidget(self.comfy_settings_button)
+        self.diagram_button = QPushButton("図で設定")
+        self.diagram_button.setToolTip("設定・処理・送る前の確認を図のように並べた画面で、次に生成するときの設定を決めます (生成はしません)")
+        generate_bar.addWidget(self.diagram_button)
+        tool_row.addWidget(generate_group)
+
         manage_group = QGroupBox("管理")
         manage_bar = QHBoxLayout(manage_group)
         self.profiles_button = QPushButton("プロファイル管理")
@@ -117,12 +144,17 @@ class MainWindow(QMainWindow):
         manage_bar.addWidget(self.profiles_button)
         tool_row.addWidget(manage_group)
 
-        pwc_group = QGroupBox("PromptWordCrafter")
+        pwc_group = QGroupBox("連携")
         pwc_bar = QHBoxLayout(pwc_group)
         self.pwc_button = QPushButton("PWC で開く")
-        self.pwc_button.setToolTip("このフォルダを PromptWordCrafter で開きます (一覧で選んでいるファイルを選んだ状態で)。"
-                                   "そこから生成するか、PrismLab に送ります")
+        self.pwc_button.setToolTip("このフォルダを PromptWordCrafter で開きます (一覧で選んでいるファイルを選んだ状態で)")
         pwc_bar.addWidget(self.pwc_button)
+        self.prismlab_button = QPushButton("PrismLab に送る")
+        self.prismlab_button.setToolTip("一覧で選んでいるテキストを、PrismLab の量産の入口か物語に送ります")
+        self.prismlab_menu = QMenu(self.prismlab_button)
+        self.prismlab_menu.aboutToShow.connect(self._fill_prismlab_button_menu)
+        self.prismlab_button.setMenu(self.prismlab_menu)
+        pwc_bar.addWidget(self.prismlab_button)
         tool_row.addWidget(pwc_group)
         tool_row.addStretch(1)
         root.addLayout(tool_row)
@@ -144,25 +176,37 @@ class MainWindow(QMainWindow):
         self.folder_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.splitter.addWidget(self.folder_tree)
 
+        self.folder_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.splitter.addWidget(self.file_list)
 
         self.tabs = QTabWidget()
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setPlaceholderText("ファイル一覧で選んだファイルの中身を表示します")
-        self.tabs.addTab(self.preview, "プレビュー")
+        # プレビューと、その下に「生成結果」(このテキストから生成した画像・動画。PWC と同じ帯)
+        self.preview_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.preview_splitter.addWidget(self.preview)
+        self.results_strip = ResultsStrip()
+        self.preview_splitter.addWidget(self.results_strip)
+        self.preview_splitter.setStretchFactor(0, 1)
+        self.preview_splitter.setStretchFactor(1, 0)
+        self.preview_splitter.setCollapsible(0, False)
+        self.tabs.addTab(self.preview_splitter, "プレビュー")
         self.generate_tab = GenerateTab(self.target_profiles, self.queue, self.bridge, self.settings,
                                         lambda: self.folder_edit.text(), self.on_files_saved, self.open_in_pwc,
-                                        self.save_settings)
+                                        self.save_settings, generate_files=self.generate_files)
         self.tabs.addTab(self.generate_tab, "ざっくり生成")
         folder_text = lambda: self.folder_edit.text()  # noqa: E731
         self.extract_tab = ExtractTab(self.queue, self.bridge, self.settings, self.selected_files, folder_text,
                                       self.on_files_saved)
         self.tabs.addTab(self.extract_tab, "抽出")
         self.process_tab = ProcessTab(self.target_profiles, self.queue, self.bridge, self.router, self.settings,
-                                      self.selected_files, folder_text, self.on_files_saved, self.open_in_pwc)
+                                      self.selected_files, folder_text, self.on_files_saved, self.open_in_pwc,
+                                      generate_files=self.generate_files)
         self.tabs.addTab(self.process_tab, "加工")
         for name, phase in WORK_TABS:
             placeholder = QLabel(f"「{name}」はフェーズ{phase}で作ります。")
@@ -200,6 +244,17 @@ class MainWindow(QMainWindow):
         self.open_config_button.clicked.connect(lambda: os.startfile(str(paths.BASE_DIR)))
         self.cancel_button.clicked.connect(self.cancel_jobs)
         self.pwc_button.clicked.connect(self.open_folder_in_pwc)
+        self.comfy_button.clicked.connect(self.generate_selected)
+        self.jobs_button.clicked.connect(self.generation.show_jobs)
+        self.comfy_settings_button.clicked.connect(self.generation.show_settings)
+        self.diagram_button.clicked.connect(self.diagram_settings)
+        self.generation.jobs_changed.connect(self.update_jobs_button)
+        self.generation.job_done.connect(self.on_generation_done)
+        self.results_strip.status.connect(self.statusBar().showMessage)
+        self.results_strip.info_requested.connect(self.generation.show_record)
+        QShortcut(QKeySequence("Ctrl+J"), self, activated=self.generation.show_jobs)
+        self.file_list.customContextMenuRequested.connect(self.show_file_menu)
+        self.folder_tree.customContextMenuRequested.connect(self.show_folder_menu)
 
     def _restore_state(self):
         geometry = self.ui_state.get("geometry")
@@ -226,6 +281,9 @@ class MainWindow(QMainWindow):
             pass
 
     def closeEvent(self, event):
+        if not self.generation.confirm_close():
+            event.ignore()
+            return
         if self.queue.pending_count():
             answer = QMessageBox.question(
                 self, "MuseFactory", "処理中のものがあります。取り消して閉じますか?",
@@ -252,6 +310,9 @@ class MainWindow(QMainWindow):
             return
         keep = self.current_path
         self.file_list.clear()
+        self.current_path = None
+        self.preview.clear()
+        self.results_strip.clear()
         try:
             entries = sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in LIST_SUFFIXES),
                              key=lambda p: p.name.lower())
@@ -280,13 +341,18 @@ class MainWindow(QMainWindow):
         if current is None:
             self.current_path = None
             self.preview.clear()
+            self.results_strip.clear()
             return
         self.current_path = Path(current.data(Qt.ItemDataRole.UserRole))
         try:
-            self.preview.setPlainText(self.current_path.read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeDecodeError) as exc:
+            self.preview.setPlainText(files.read_text(self.current_path))
+        except OSError as exc:
             self.preview.setPlainText(f"(読めません: {exc})")
-        self.tabs.setCurrentWidget(self.preview)
+        if self.current_path.suffix.lower() == ".txt":
+            self.results_strip.show_for(self.current_path, self.prompt_text_for(self.current_path))
+        else:
+            self.results_strip.clear()
+        self.tabs.setCurrentWidget(self.preview_splitter)
 
     def selected_files(self) -> list[Path]:
         return [Path(i.data(Qt.ItemDataRole.UserRole)) for i in self.file_list.selectedItems()]
@@ -305,6 +371,215 @@ class MainWindow(QMainWindow):
             config.save_settings(self.settings)
         except OSError as exc:
             self.statusBar().showMessage(f"設定を保存できません: {exc}")
+
+    # ------------------------------------------------------------ 生成 (ComfyUI)
+
+    def prompt_text_for(self, path: Path) -> str:
+        """ワークフローにプロンプトとして渡す本文 (PWC と同じ表記にそろえる: NBSP→空白、改行→LF)。"""
+        try:
+            return results._normalize(files.read_text(path))
+        except OSError:
+            return ""
+
+    def generation_sources(self) -> list[Path]:
+        """一覧で選んでいる .txt (なければ表示中のもの)。"""
+        sources = [p for p in self.selected_files() if p.suffix.lower() == ".txt"]
+        if not sources and self.current_path is not None and self.current_path.suffix.lower() == ".txt":
+            sources = [self.current_path]
+        return sources
+
+    def list_txt_files(self) -> list[Path]:
+        paths = [Path(self.file_list.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(self.file_list.count())]
+        return [p for p in paths if p.suffix.lower() == ".txt"]
+
+    def generate_selected(self):
+        sources = self.generation_sources()
+        if not sources:
+            self.statusBar().showMessage("生成するテキストファイルを一覧で選んでください。")
+            return
+        self.generation.generate(sources, what="選択中のファイル")
+
+    def generate_files(self, paths: list[Path], what: str = "保存したファイル"):
+        """作業タブの「保存して生成する」から。"""
+        sources = [p for p in paths if p.suffix.lower() == ".txt" and p.is_file()]
+        if sources:
+            self.generation.generate(sources, what=what)
+
+    def diagram_settings(self):
+        self.generation.show_diagram_settings(self.generation_sources())
+
+    def generate_folder(self, folder: Path, recursive: bool):
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)  # サブフォルダが多いと数えるのに時間がかかる
+        try:
+            sources = [p for p in text_io.list_text_files(folder, recursive) if p.suffix.lower() == ".txt"]
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not sources:
+            where = "このフォルダとサブフォルダ" if recursive else "このフォルダ"
+            self.statusBar().showMessage(f"{where}にテキストファイルがありません: {folder}")
+            return
+        what = f"フォルダ「{folder.name or folder}」" + ("とサブフォルダ" if recursive else "")
+        self.generation.generate(sources, what=what)
+
+    def update_jobs_button(self):
+        active = self.generation.active_count
+        paused = "・一時停止中" if self.generation.paused else ""
+        self.jobs_button.setText(f"生成ジョブ ({active}{paused})" if active else "生成ジョブ")
+
+    def on_generation_done(self, job):
+        """表示中のテキストから生成したものなら、生成結果の帯に加える。"""
+        if self.current_path is not None and results.same_path(job.source, self.current_path):
+            self.results_strip.refresh(self.prompt_text_for(self.current_path))
+
+    def changeEvent(self, event):
+        # PrismLab などから戻ってきたら、生成結果の帯を読み直す (PWC と同じ)
+        if event.type() == QEvent.Type.ActivationChange:
+            if self.isActiveWindow():
+                away = getattr(self, "_left_at", None)
+                if away is not None and time.monotonic() - away >= 1.0 and self.current_path is not None:
+                    self.results_strip.refresh(self.prompt_text_for(self.current_path))
+                self._left_at = None
+            elif QApplication.activeModalWidget() is None:
+                self._left_at = time.monotonic()
+        super().changeEvent(event)
+
+    def show_file_menu(self, pos):
+        """ファイル一覧の右クリックメニュー。"""
+        item = self.file_list.itemAt(pos)
+        clicked = Path(item.data(Qt.ItemDataRole.UserRole)) if item is not None else self.current_path
+        selected = self.generation_sources()
+        all_txt = self.list_txt_files()
+        menu = QMenu(self)
+        gen = QMenu("生成 (ComfyUI)", menu)  # 親を付けて作る (関数を抜けても消えないように)
+        menu.addMenu(gen)
+        generate = gen.addAction(f"選択中のファイルを生成する ({len(selected)} 件)..." if len(selected) > 1
+                                 else "生成する (ComfyUI)...")
+        generate.setEnabled(bool(selected))
+        generate.triggered.connect(self.generate_selected)
+        generate_all = gen.addAction(f"一覧のファイルをまとめて生成する ({len(all_txt)} 件)...")
+        generate_all.setEnabled(bool(all_txt))
+        generate_all.triggered.connect(lambda: self.generation.generate(all_txt, what="一覧のファイル"))
+        info = gen.addAction("生成時の設定...")
+        info.setEnabled(clicked is not None and self.generation.has_history(clicked))
+        info.triggered.connect(lambda: self.generation.show_gen_info(clicked))
+        gen.addSeparator()
+        jobs = gen.addAction("生成ジョブの一覧...\tCtrl+J")
+        jobs.triggered.connect(self.generation.show_jobs)
+        settings = gen.addAction("生成の設定...")
+        settings.triggered.connect(self.generation.show_settings)
+        self._add_prismlab_menu(menu, selected)
+        menu.addSeparator()
+        pwc = menu.addAction("PWC で開く")
+        pwc.triggered.connect(self.open_folder_in_pwc)
+        menu.exec(self.file_list.viewport().mapToGlobal(pos))
+
+    def show_folder_menu(self, pos):
+        """フォルダツリーの右クリックメニュー。右クリックしただけではフォルダを開かない。"""
+        index = self.folder_tree.indexAt(pos)
+        if not index.isValid():
+            return
+        folder = Path(self.dir_model.filePath(index))
+        if not folder.is_dir():
+            return
+        count = len([p for p in text_io.list_text_files(folder) if p.suffix.lower() == ".txt"])
+        menu = QMenu(self)
+        gen = QMenu("生成 (ComfyUI)", menu)
+        menu.addMenu(gen)
+        generate = gen.addAction(f"このフォルダのテキストをまとめて生成する ({count} 件)...")
+        generate.setEnabled(count > 0)
+        generate.triggered.connect(lambda: self.generate_folder(folder, recursive=False))
+        generate_all = gen.addAction("サブフォルダも含めてまとめて生成する...")
+        generate_all.triggered.connect(lambda: self.generate_folder(folder, recursive=True))
+        gen.addSeparator()
+        jobs = gen.addAction("生成ジョブの一覧...\tCtrl+J")
+        jobs.triggered.connect(self.generation.show_jobs)
+        settings = gen.addAction("生成の設定...")
+        settings.triggered.connect(self.generation.show_settings)
+        self._add_prismlab_folder_menu(menu, folder, count)
+        menu.addSeparator()
+        pwc = menu.addAction("PWC で開く")
+        pwc.triggered.connect(lambda: self.open_in_pwc(folder, []))
+        explorer = menu.addAction("エクスプローラーで開く")
+        explorer.triggered.connect(lambda: os.startfile(str(folder)))
+        menu.exec(self.folder_tree.viewport().mapToGlobal(pos))
+
+    # ------------------------------------------------------------ PrismLab に送る (PWC と同じ)
+
+    def _fill_prismlab_button_menu(self):
+        self.prismlab_menu.clear()
+        self._fill_prismlab_menu(self.prismlab_menu, self.generation_sources())
+
+    def _add_prismlab_menu(self, menu: QMenu, selected: list[Path]) -> None:
+        sub = QMenu("PrismLab に送る", menu)
+        menu.addMenu(sub)
+        self._fill_prismlab_menu(sub, selected)
+
+    def _fill_prismlab_menu(self, sub: QMenu, selected: list[Path]) -> None:
+        sub.setToolTipsVisible(True)
+        if not selected:
+            none = sub.addAction("(一覧でテキストファイルを選んでください)")
+            none.setEnabled(False)
+            return
+        names = prismlab_link.recipe_names()
+        unit = f" ({len(selected)} 件)" if len(selected) > 1 else ""
+        if names:
+            head = sub.addAction(f"量産の入口に{unit}:")
+            head.setEnabled(False)
+            for index, name in enumerate(names):
+                action = sub.addAction("    " + (name or "(名前なし)"))
+                action.setToolTip("選んだテキストを、このレシピの入口 (選択) にします。始めるのは PrismLab で。")
+                action.triggered.connect(
+                    lambda _c=False, n=name, i=index, f=list(selected): self.send_to_prismlab_recipe(f, n, i))
+        else:
+            none = sub.addAction("(PrismLab のレシピがありません)")
+            none.setEnabled(False)
+        sub.addSeparator()
+        story = sub.addAction("物語: 選んでいるシーンの元のプロンプトに")
+        story.setToolTip("PrismLab で開いている物語の、選んでいるシーンの元のプロンプトをこの本文にします (1 件のとき)。")
+        story.setEnabled(len(selected) == 1)
+        story.triggered.connect(lambda: self.send_to_prismlab_story(selected[0]))
+
+    def _add_prismlab_folder_menu(self, menu: QMenu, folder: Path, count: int) -> None:
+        sub = QMenu("PrismLab に送る", menu)
+        menu.addMenu(sub)
+        sub.setToolTipsVisible(True)
+        names = prismlab_link.recipe_names()
+        if not names:
+            none = sub.addAction("(PrismLab のレシピがありません)")
+            none.setEnabled(False)
+            return
+        scopes = [(False, f"このフォルダのテキスト ({count} 件) を量産の入口に:"), (True, "サブフォルダも含めて量産の入口に:")]
+        for number, (recursive, title) in enumerate(scopes):
+            if number:
+                sub.addSeparator()
+            head = sub.addAction(title)
+            head.setEnabled(False)
+            for index, name in enumerate(names):
+                action = sub.addAction("    " + (name or "(名前なし)"))
+                action.setEnabled(recursive or count > 0)
+                action.triggered.connect(
+                    lambda _c=False, n=name, i=index, r=recursive: self.send_folder_to_prismlab_recipe(folder, r, n, i))
+
+    def send_folder_to_prismlab_recipe(self, folder: Path, recursive: bool, name: str, index: int) -> None:
+        sources = [p for p in text_io.list_text_files(folder, recursive) if p.suffix.lower() == ".txt"]
+        if not sources:
+            self.statusBar().showMessage(f"テキストファイルがありません: {folder}")
+            return
+        self.send_to_prismlab_recipe(sources, name, index)
+
+    def send_to_prismlab_recipe(self, sources: list[Path], name: str, index: int) -> None:
+        problem = prismlab_link.send_to_recipe(sources, name, index)
+        if problem:
+            QMessageBox.warning(self, "PrismLab に送る", problem)
+        else:
+            self.statusBar().showMessage(f"{len(sources)} 件を PrismLab のレシピ「{name}」の入口に送りました。")
+
+    def send_to_prismlab_story(self, source: Path) -> None:
+        problem = prismlab_link.send_to_story_original(source)
+        if problem:
+            QMessageBox.warning(self, "PrismLab に送る", problem)
+        else:
+            self.statusBar().showMessage(f"{source.name} を PrismLab の物語 (選んでいるシーンの元のプロンプト) に送りました。")
 
     # ------------------------------------------------------------ PromptWordCrafter
 
