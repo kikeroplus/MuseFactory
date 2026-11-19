@@ -408,6 +408,12 @@ MuseFactory/
 - Qwen 3.5 9B は画像も見られる (vlm) ので image_to_prompt も Qwen 9B を先にし、Gemma Vision は予備にする。モデルの入れ替えがなくなり、1 枚 3〜9 秒 (Gemma に入れ替えると 80 秒ほど)
 - タスク割り当ては接続テストの画面の「割り当てを変える...」(行のダブルクリックでも可)で、使う LLM と試す順を選ぶ。「ほかのタスクも全部これにする」で画像から以外をまとめて変えられる。image_to_prompt は画像を見られるプロファイルだけ選べる。config/settings.json に保存し、すぐ効く
 
+## 7.6 EXE
+- 作り方: リポジトリの直下で `py -3.11 -m PyInstaller --noconfirm MuseFactory.spec`(`..\GenCommon` を取り込む)。出来た `dist\MuseFactory.exe` を `Desktop\Application` に写す(写す前に MuseFactory を閉じる)
+- EXE のデータは「EXE のあるフォルダ\MuseFactory」(config / profiles / library / logs)。Application にはほかのアプリも並ぶのでまとめる。開発中(`py main.py`)はリポジトリの直下を使うので、データは別々
+- 初めて起動したとき、EXE に入れた既定のプロファイルを写す(あるファイルは上書きしない)。LLM への指示文(prompts/*.txt)は EXE の中のものを使う
+- アイコンは `assets/icon.ico`
+
 ## 8. 実装上の注意(LLM関連)
 - 小さいモデル(9B)前提:**JSONスキーマは浅く、1リクエスト1仕事**にする
 - temperatureの目安:抽出・翻訳 0.1〜0.3/各シーンのプロンプト化 0.5〜0.7/盛る・構成案・バリエーション 0.8前後(プロファイルの値を優先し、タスク側で上書き可能に)

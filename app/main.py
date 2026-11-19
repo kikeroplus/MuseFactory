@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 
+from . import paths
 from .core import config
 from .gen import profile as gen_profile
 from .ui.main_window import MainWindow
@@ -61,6 +62,7 @@ def main():
     except Exception as exc:  # noqa: BLE001 - 生成が使えなくても LLM の機能は使えるように
         notes.append(f"生成の設定を読めません: {exc}")
     try:
+        paths.ensure_data_dirs()  # EXE で初めて起動したら、既定のプロファイルを写す
         config.ensure_settings_file()  # 初回は既定の設定ファイルを書いておく
     except OSError as exc:
         notes.append(f"設定ファイルを書けません: {exc}")
