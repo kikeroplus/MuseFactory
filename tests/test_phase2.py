@@ -146,6 +146,19 @@ class NamingTest(unittest.TestCase):
         self.assertEqual(first.name, "a_3.txt")
         self.assertEqual(second.name, "a_4.txt")
 
+    def test_serial_continues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self.assertEqual(output.next_serial(folder, "muse"), 1)
+            (folder / "muse_Krea2_01.txt").write_text("x", encoding="utf-8")  # 前の形式は数えない
+            (folder / "Muse_0007_Krea2.txt").write_text("x", encoding="utf-8")
+            (folder / ".muse").mkdir()
+            (folder / ".muse" / "muse_0012_Wan2.2I2V.json").write_text("{}", encoding="utf-8")
+            (folder / "museX_0050_a.txt").write_text("x", encoding="utf-8")  # 別の頭
+            serial = output.next_serial(folder, "muse")
+        self.assertEqual(serial, 13)
+        self.assertEqual(output.serial_stem("muse", serial, "Krea2"), "muse_0013_Krea2")
+
     def test_safe_name(self):
         self.assertEqual(files.safe_name('勇者:魔王/戦い?'), "勇者_魔王_戦い_")
 

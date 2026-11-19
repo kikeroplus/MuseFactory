@@ -6,6 +6,7 @@
 - 上書きしない: 同じ名前があれば「_2」「_3」… を付ける (付けた名前は .muse のものとそろえる)
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -36,6 +37,32 @@ def japanese_path(prompt_path: Path) -> Path:
 def _taken(prompt_path: Path) -> bool:
     return any(p.exists() for p in (prompt_path, json_path(prompt_path), negative_path(prompt_path),
                                     japanese_path(prompt_path)))
+
+
+SERIAL_DIGITS = 4
+
+
+def next_serial(folder: Path, head: str) -> int:
+    """「(頭)_(通し番号)_…」の次の番号。フォルダと .muse にある同じ頭の番号のいちばん大きいもの + 1。
+    名前の順に並べると作った順になるように、桁はそろえる (SERIAL_DIGITS 桁)。"""
+    head = files.safe_name(head)
+    pattern = re.compile(re.escape(head.lower()) + r"_(\d{%d,})(?:_|$)" % SERIAL_DIGITS)
+    largest = 0
+    for place in (folder, folder / MUSE_DIR):
+        try:
+            stems = [p.stem.lower() for p in place.iterdir() if p.is_file()]
+        except OSError:
+            continue
+        for stem in stems:
+            match = pattern.match(stem)
+            if match:
+                largest = max(largest, int(match.group(1)))
+    return largest + 1
+
+
+def serial_stem(head: str, serial: int, rest: str = "") -> str:
+    stem = f"{files.safe_name(head)}_{serial:0{SERIAL_DIGITS}d}"
+    return f"{stem}_{rest}" if rest else stem
 
 
 def free_prompt_path(folder: Path, stem: str, reserved: Optional[set] = None) -> Path:

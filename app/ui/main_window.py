@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QFileSystemModel, QGro
                                QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
                                QSplitter, QTabWidget, QTreeView, QVBoxLayout, QWidget)
 from gencommon.generation import GenerationController
+from gencommon.translation import TranslationController
 
 from .. import paths
 from ..core import config
@@ -138,6 +139,11 @@ class MainWindow(QMainWindow):
         generate_bar.addWidget(self.diagram_button)
         tool_row.addWidget(generate_group)
 
+        # 翻訳 (AI) グループ: 翻訳する | 翻訳の設定 (PWC と同じ。部品はプレビューを作った後に入れる)
+        translate_group = QGroupBox("翻訳 (AI)")
+        translate_bar = QHBoxLayout(translate_group)
+        tool_row.addWidget(translate_group)
+
         manage_group = QGroupBox("管理")
         manage_bar = QHBoxLayout(manage_group)
         self.profiles_button = QPushButton("プロファイル管理")
@@ -197,6 +203,10 @@ class MainWindow(QMainWindow):
         self.preview_splitter.setStretchFactor(1, 0)
         self.preview_splitter.setCollapsible(0, False)
         self.tabs.addTab(self.preview_splitter, "プレビュー")
+        # プレビューの上に訳を出す小窓 (見るだけ。PWC と同じ部品。設定はウィンドウの状態と一緒に保存)
+        self.translation = TranslationController(self.preview, self.ui_state, self)
+        translate_bar.addWidget(self.translation.checkbox)
+        translate_bar.addWidget(self.translation.settings_button)
         self.generate_tab = GenerateTab(self.target_profiles, self.queue, self.bridge, self.settings,
                                         lambda: self.folder_edit.text(), self.on_files_saved, self.open_in_pwc,
                                         self.save_settings, generate_files=self.generate_files,
@@ -286,6 +296,7 @@ class MainWindow(QMainWindow):
         self.ui_state["geometry"] = bytes(self.saveGeometry().toBase64()).decode("ascii")
         self.ui_state["splitter"] = self.splitter.sizes()
         self.ui_state["folder"] = self.folder_edit.text().strip()
+        self.ui_state.update(self.translation.settings())
         try:
             files.write_json(paths.UI_STATE_FILE, self.ui_state)
         except OSError:
@@ -324,6 +335,7 @@ class MainWindow(QMainWindow):
         self.current_path = None
         self.preview.clear()
         self.results_strip.clear()
+        self.translation.clear()
         try:
             entries = sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in LIST_SUFFIXES),
                              key=lambda p: p.name.lower())
@@ -353,12 +365,15 @@ class MainWindow(QMainWindow):
             self.current_path = None
             self.preview.clear()
             self.results_strip.clear()
+            self.translation.clear()
             return
         self.current_path = Path(current.data(Qt.ItemDataRole.UserRole))
         try:
             self.preview.setPlainText(files.read_text(self.current_path))
+            self.translation.request(self.preview.toPlainText(), self.current_path.name)
         except OSError as exc:
             self.preview.setPlainText(f"(読めません: {exc})")
+            self.translation.clear()
         if self.current_path.suffix.lower() == ".txt":
             self.results_strip.show_for(self.current_path, self.prompt_text_for(self.current_path))
         else:

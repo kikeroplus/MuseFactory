@@ -109,7 +109,7 @@ class GenerateTab(QWidget):
         omakase_row.addWidget(self.omakase_label)
         form.addRow("おまかせ度", omakase_row)
         self.name_edit = QLineEdit("muse")
-        self.name_edit.setToolTip("保存するファイル名の頭。「(頭)_(モデル)_(番号).txt」になります")
+        self.name_edit.setToolTip("保存するファイル名の頭。「(頭)_(通し番号)_(モデル).txt」になります。番号は保存するたびに続きから付くので、名前の順が作った順になります")
         form.addRow("ファイル名", self.name_edit)
         self.generate_button = QPushButton("生成する")
         form.addRow(self.generate_button)
@@ -525,9 +525,10 @@ class GenerateTab(QWidget):
         save_json = bool(self.settings.get("save_intermediate_json", True))
         reserved: set = set()
         saved: list[Path] = []
+        serial = output.next_serial(folder, base)  # 名前の順 = 作った順 (保存するたびに続きの番号)
         try:
-            for item in targets:
-                path = output.free_prompt_path(folder, f"{base}_{item.target.slug}_{item.variation.index:02d}", reserved)
+            for n, item in enumerate(targets):
+                path = output.free_prompt_path(folder, output.serial_stem(base, serial + n, item.target.slug), reserved)
                 data = dict(item.intermediate or {})
                 data["target"] = item.target.name  # どのモデル向けに出したか (出し直すときの手がかり)
                 result = output.save_prompt(path, item.text, data, item.negative if item.target.negative_supported else "",
