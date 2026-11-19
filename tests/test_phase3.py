@@ -1,6 +1,7 @@
 """フェーズ3: 抽出・加工の中身 (LLM は偽のサーバー)。"""
 
 import json
+import re
 import tempfile
 import threading
 import unittest
@@ -11,7 +12,8 @@ from app.core.config import LLMProfile
 from app.core.job_queue import CANCELLED, DONE, Job, JobQueue
 from app.core.llm_client import LLMClient
 from app.core.tasks import process
-from app.core.tasks.extract import Extracted, add_to_library, write_per_element, write_wildcards
+from app.core.tasks.extract import (REMOVED, Extracted, add_to_library, remove_elements, write_per_element,
+                                    write_removed, write_wildcards)
 from app.ui.common import diff_ranges
 from app.util import files, log
 from tests.fake_server import FakeServer
@@ -47,6 +49,20 @@ def responder(payload):
         data = json.loads(user)
         data.update({"motion": "she waves", "camera_motion": "slow push in",
                      "timeline": [{"start": 0, "end": 3, "action": "smiles"}, {"start": 3, "end": 99, "action": "waves"}]})
+        return json.dumps(data)
+    if system.startswith("You remove"):
+        # 手がかりの語を消す (手がかりがなければ background は最後の項目とみなして消す)
+        head, prompt = user.split("Prompt:\n", 1)
+        words = re.findall(r'^- \w+: "(.*)"$', head, flags=re.MULTILINE)
+        if not words and "- background" in head:
+            words = [prompt.rsplit(",", 1)[-1].strip()]
+        parts = [p.strip() for p in prompt.split(",")]
+        return "Prompt:\n" + ", ".join(p for p in parts if p not in words)
+    if system.startswith("You edit a prompt"):
+        return "Prompt:\n" + user.split("Prompt:\n", 1)[1].replace("school uniform", "red dress")
+    if system.startswith("You edit a scene"):
+        data = json.loads(user.split("Fields:\n", 1)[1])
+        data["outfit"] = "red dress"
         return json.dumps(data)
     if system.startswith("You write negative"):
         return "blurry, extra fingers, dark night"
@@ -162,9 +178,84 @@ class ProcessTest(Base):
         self.assertEqual(process.amount_for(3), "short")
         self.assertEqual(process.amount_for(10), "long")
 
+    def test_modify_text_keeps_rest(self):
+        modified = process.modify_text(self.client, PROMPTS["a.txt"], "服を赤いドレスに")
+        self.assertEqual(modified, "1girl, standing, smiling, red dress, classroom")  # 「Prompt:」は取る
+        user = self.server.requests_chat()[0]["messages"][-1]["content"]
+        self.assertIn("Instruction: 服を赤いドレスに", user)
+        self.assertNotIn("Planned changes", user)
+
+    def test_modify_text_gets_planned_changes(self):
+        before = intermediate.normalize(DECOMPOSED["a.txt"])
+        after = process.modify(self.client, before, "服を赤いドレスに")
+        changes = process.changed_fields(before, after)
+        self.assertEqual(changes, {"outfit": ("school uniform", "red dress")})
+        process.modify_text(self.client, PROMPTS["a.txt"], "服を赤いドレスに", changes)
+        user = self.server.requests_chat()[-1]["messages"][-1]["content"]
+        self.assertIn('- outfit: "school uniform" -> "red dress"', user)
+
+    def test_modify_intermediate(self):
+        data = intermediate.normalize(DECOMPOSED["a.txt"])
+        modified = process.modify(self.client, data, "服を赤いドレスに")
+        self.assertEqual(modified["outfit"], "red dress")
+        self.assertEqual(modified["pose"], "standing")
+        self.assertEqual(modified["id"], data["id"])
+
     def test_negative(self):
         data = intermediate.normalize(DECOMPOSED["c.txt"])
         self.assertEqual(process.make_negative(self.client, data), "blurry, extra fingers, dark night")
+
+
+class RemoveTest(Base):
+    """削除する要素 (取り出すの反対): 元の文からその要素のところだけを消す。"""
+
+    class Token:
+        def check(self):
+            pass
+
+    def run_job(self, name, elements, removing, use_existing=False):
+        from app.ui.extract_tab import ExtractTab
+        job = ExtractTab._make_job(self.folder / name, use_existing, elements, removing)
+        return job(self.client.profile, self.Token())
+
+    def test_remove_with_hints(self):
+        data = DECOMPOSED["a.txt"]
+        text = remove_elements(self.client, PROMPTS["a.txt"], ["background", "pose"], data)
+        self.assertEqual(text, "1girl, smiling, school uniform")
+        user = self.server.requests_chat()[-1]["messages"][-1]["content"]
+        self.assertIn('- background: "classroom"', user)  # 分解で見つけた語を手がかりに渡す
+        self.assertIn('- pose: "standing"', user)
+
+    def test_job_remove_only_skips_decompose(self):
+        data, _note = self.run_job("a.txt", [], ["background"])
+        self.assertEqual(len(self.server.requests_chat()), 1)  # 消すだけなら分解しない
+        self.assertEqual(data[REMOVED], "1girl, standing, smiling, school uniform")
+
+    def test_job_extract_and_remove(self):
+        data, _note = self.run_job("c.txt", ["pose"], ["background"])
+        self.assertEqual(len(self.server.requests_chat()), 2)
+        self.assertEqual(data["pose"], "kneeling")
+        self.assertEqual(data[REMOVED], "a knight kneeling, solemn face")
+
+    def test_job_uses_saved_intermediate(self):
+        path = self.folder / "a.txt"
+        saved = intermediate.normalize(DECOMPOSED["a.txt"])
+        json_path = output.json_path(path)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(intermediate.to_json(saved), encoding="utf-8")
+        data, note = self.run_job("a.txt", ["pose"], ["background"], use_existing=True)
+        self.assertEqual(note, "保存した中間表現")
+        self.assertEqual(len(self.server.requests_chat()), 1)  # 分解は頼まず、消すだけ
+        self.assertEqual(data[REMOVED], "1girl, standing, smiling, school uniform")
+
+    def test_write_removed(self):
+        results = [Extracted(Path("a.txt"), {REMOVED: "1girl, smiling"}), Extracted(Path("b.txt"), {REMOVED: ""})]
+        out = self.folder / "extract"
+        paths = write_removed(results, ["background", "pose"], out)
+        self.assertEqual([p.name for p in paths], ["a_without_background_pose.txt"])  # 空は書かない
+        self.assertEqual(paths[0].read_text(encoding="utf-8"), "1girl, smiling\n")
+        again = write_removed(results, ["background", "pose"], out)
+        self.assertEqual(again[0].name, "a_without_background_pose_2.txt")  # 上書きしない
 
 
 class CancelTest(unittest.TestCase):

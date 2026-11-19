@@ -1,6 +1,7 @@
 """作業タブ「抽出」(SPEC 5.2)。
 
 1 ファイルずつ LLM で中間表現に分解し、選んだ要素だけを取り出す。結果は表で直してから書き出す。
+「削除する要素」を選ぶと、元の文からその要素のところだけを消した文も作る (2026-11-19 利用者の希望)。
 MuseFactory が作ったファイル (.muse に中間表現がある) は、LLM に頼まずそれを使える。
 """
 
@@ -18,7 +19,8 @@ from ..core import intermediate
 from ..core.job_queue import CANCELLED, DONE, Job
 from ..core.llm_client import LLMClient
 from ..core.tasks import process
-from ..core.tasks.extract import Extracted, add_to_library, write_per_element, write_wildcards
+from ..core.tasks.extract import (REMOVED, Extracted, add_to_library, remove_elements, removed_name,
+                                  write_per_element, write_removed, write_wildcards)
 from ..util import files
 from . import style
 from .common import FolderRow, InputFilesBox
@@ -43,6 +45,7 @@ class ExtractTab(QWidget):
         self.sources: list[Path] = []
         self.results: dict[int, dict] = {}  # 行 → 中間表現
         self.columns: list[str] = []
+        self.removing: list[str] = []  # 削除する要素 (始めたときのもの)
         self._build(selected_in_main, current_folder)
         bridge.event.connect(self.on_job_event)
 
@@ -61,6 +64,18 @@ class ExtractTab(QWidget):
             self.element_checks[name] = check
             grid.addWidget(check, i % 5, i // 5)
         top.addWidget(element_box, 3)
+
+        # 取り出すの反対: 元の文からその要素のところだけを消す (言い回しは元のまま)
+        remove_box = QGroupBox("削除する要素")
+        remove_box.setToolTip("元の文から、チェックした要素のところだけを消した文を作ります。\n"
+                              "書き出すと (元の名前)_without_(要素).txt になります。")
+        rgrid = QGridLayout(remove_box)
+        self.remove_checks: dict[str, QCheckBox] = {}
+        for i, name in enumerate(intermediate.ELEMENTS):
+            check = QCheckBox(f"{ELEMENT_LABELS.get(name, name)} ({name})")
+            self.remove_checks[name] = check
+            rgrid.addWidget(check, i % 5, i // 5)
+        top.addWidget(remove_box, 3)
 
         out_box = QGroupBox("書き出し")
         ov = QVBoxLayout(out_box)
@@ -107,6 +122,9 @@ class ExtractTab(QWidget):
     def selected_elements(self) -> list[str]:
         return [n for n, c in self.element_checks.items() if c.isChecked()]
 
+    def removed_elements(self) -> list[str]:
+        return [n for n, c in self.remove_checks.items() if c.isChecked()]
+
     def output_folder(self) -> Path:
         text = self.out_folder.text()
         if text:
@@ -116,25 +134,30 @@ class ExtractTab(QWidget):
     def start(self):
         sources = self.inputs.files()
         elements = self.selected_elements()
+        removing = self.removed_elements()
         if not sources:
             QMessageBox.information(self, "抽出", "入力ファイルを足してください。")
             return
-        if not elements:
-            QMessageBox.information(self, "抽出", "取り出す要素を 1 つ以上チェックしてください。")
+        if not elements and not removing:
+            QMessageBox.information(self, "抽出", "取り出す要素か削除する要素を 1 つ以上チェックしてください。")
             return
         if self._batch is not None:
             return
         self.sources = sources
         self.columns = elements
+        self.removing = removing
         self.results = {}
         self.table.clear()
         self.table.setRowCount(len(sources))
-        self.table.setColumnCount(2 + len(elements))
-        self.table.setHorizontalHeaderLabels(["ファイル", "状態"] + [ELEMENT_LABELS.get(e, e) for e in elements])
+        labels = [ELEMENT_LABELS.get(e, e) for e in elements]
+        if removing:
+            labels.append("削除したあと (" + "・".join(ELEMENT_LABELS.get(e, e) for e in removing) + " を消す)")
+        self.table.setColumnCount(2 + len(labels))
+        self.table.setHorizontalHeaderLabels(["ファイル", "状態"] + labels)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        for col in range(2, 2 + len(elements)):
+        for col in range(2, 2 + len(labels)):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
         use_existing = self.use_existing_check.isChecked()
         jobs = []
@@ -145,24 +168,34 @@ class ExtractTab(QWidget):
             name.setToolTip(str(path))
             self.table.setItem(row, 0, name)
             self._set_status(row, "待機", style.HINT)
-            job = Job("extract", path.name, self._make_job(path, use_existing))
+            job = Job("extract", path.name, self._make_job(path, use_existing, elements, removing))
             self._job_row[job.id] = row
             jobs.append(job)
         self._batch = self.queue.submit(jobs, name="抽出", quiet=True)
         self._update_buttons()
 
     @staticmethod
-    def _make_job(path: Path, use_existing: bool):
+    def _make_job(path: Path, use_existing: bool, elements: list, removing: list):
         def run(profile, token):
             token.check()
+            data, note = None, ""
             if use_existing:
                 data = process.existing_intermediate(path)
                 if data is not None:
-                    return data, "保存した中間表現"
-            text = files.read_prompt_source(path).strip()
-            if not text:
-                raise ValueError("ファイルが空です")
-            return process.decompose(LLMClient(profile), text, path), ""
+                    note = "保存した中間表現"
+            text = ""
+            if data is None or removing:
+                text = files.read_prompt_source(path).strip()
+                if not text:
+                    raise ValueError("ファイルが空です")
+            if data is None:
+                # 削除だけなら分解はしない (消すところの手がかりなしで頼む)
+                data = process.decompose(LLMClient(profile), text, path) if elements else {}
+            if removing:
+                token.check()
+                data = dict(data)
+                data[REMOVED] = remove_elements(LLMClient(profile), text, removing, data)
+            return data, note
         return run
 
     def on_job_event(self, event: str, data: dict):
@@ -178,6 +211,8 @@ class ExtractTab(QWidget):
                     self._set_status(row, "✓ " + (note or f"{job.elapsed:.1f} 秒"), style.OK)
                     for col, element in enumerate(self.columns, start=2):
                         self.table.setItem(row, col, QTableWidgetItem(result.get(element, "")))
+                    if self.removing:
+                        self.table.setItem(row, 2 + len(self.columns), QTableWidgetItem(result.get(REMOVED, "")))
                 elif job.status == CANCELLED:
                     self._set_status(row, "キャンセルしました", style.HINT)
                 else:
@@ -212,11 +247,15 @@ class ExtractTab(QWidget):
             for col, element in enumerate(self.columns, start=2):
                 item = self.table.item(row, col)
                 edited[element] = item.text().strip() if item else ""
+            if self.removing:
+                item = self.table.item(row, 2 + len(self.columns))
+                edited[REMOVED] = item.text().strip() if item else ""
             out.append(Extracted(self.sources[row], edited))
         return out
 
     def save(self):
-        if not (self.per_element_check.isChecked() or self.wildcard_check.isChecked() or self.library_check.isChecked()):
+        if self.columns and not self.removing and not (
+                self.per_element_check.isChecked() or self.wildcard_check.isChecked() or self.library_check.isChecked()):
             QMessageBox.information(self, "抽出", "書き出し方を 1 つ以上チェックしてください。")
             return
         results = self.edited_results()
@@ -224,15 +263,19 @@ class ExtractTab(QWidget):
         written: list[Path] = []
         notes = []
         try:
-            if self.per_element_check.isChecked():
+            if self.removing:
+                paths = write_removed(results, self.removing, folder)
+                written += paths
+                notes.append(f"削除したあと {len(paths)} ファイル (…{removed_name(Path('x'), self.removing)[1:]})")
+            if self.columns and self.per_element_check.isChecked():
                 paths = write_per_element(results, self.columns, folder)
                 written += paths
                 notes.append(f"要素ごと {len(paths)} ファイル")
-            if self.wildcard_check.isChecked():
+            if self.columns and self.wildcard_check.isChecked():
                 paths = write_wildcards(results, self.columns, folder)
                 written += paths
                 notes.append(f"ワイルドカード {len(paths)} ファイル")
-            if self.library_check.isChecked():
+            if self.columns and self.library_check.isChecked():
                 counts = add_to_library(results, self.columns)
                 notes.append("ライブラリ " + (", ".join(f"{ELEMENT_LABELS.get(k, k)} {v} 件" for k, v in counts.items()) or "0 件"))
         except OSError as exc:
