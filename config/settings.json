@@ -1,0 +1,38 @@
+{
+  "task_routing": {
+    "generate": [
+      "Qwen 9B @LLM機"
+    ],
+    "extract": [
+      "Qwen 9B @LLM機"
+    ],
+    "translate": [
+      "Qwen 9B @LLM機"
+    ],
+    "render": [
+      "Qwen 9B @LLM機"
+    ],
+    "enhance": [
+      "Qwen 9B @LLM機"
+    ],
+    "negative": [
+      "Qwen 9B @LLM機"
+    ],
+    "story_plan": [
+      "Qwen 9B @LLM機"
+    ],
+    "image_to_prompt": [
+      "Gemma Vision @LLM機"
+    ],
+    "profile_draft": [
+      "Qwen 9B @LLM機"
+    ]
+  },
+  "comfyui_hosts": {},
+  "save_intermediate_json": true,
+  "keep_japanese_on_translate": true,
+  "notify_pwc_on_save": false,
+  "default_output_dir": "",
+  "router_cache_sec": 30,
+  "health_timeout_sec": 3
+}

@@ -1,0 +1,26 @@
+{
+  "name": "Minimax H3",
+  "type": "video",
+  "mode": "t2v",
+  "output_language": "en",
+  "style": "natural_sentence",
+  "max_length": 120,
+  "negative_supported": false,
+  "element_order": [
+    "subject",
+    "motion",
+    "camera_motion",
+    "background",
+    "lighting",
+    "style"
+  ],
+  "skip_elements": [],
+  "system_prompt": "You write text-to-video prompts for MiniMax Hailuo. Describe the subject, then what happens over time, then camera movement in brackets such as [Push in] or [Pan left], then setting, lighting and style. Keep it a single short paragraph.",
+  "example_prompts": [
+    "A silver-haired hero draws his sword and charges toward the dark castle gate as lightning flashes. [Tracking shot] [Push in] Stormy night, cold blue light, cinematic fantasy style."
+  ],
+  "temperature": 0.7,
+  "prefix": "",
+  "suffix": "",
+  "reference_image_mode": false
+}

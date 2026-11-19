@@ -1,0 +1,5 @@
+Instruction:
+{instruction}
+
+This is variation {index} of {count}.
+{avoid}

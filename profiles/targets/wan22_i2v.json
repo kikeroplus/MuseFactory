@@ -1,0 +1,28 @@
+{
+  "name": "Wan2.2 I2V",
+  "type": "video",
+  "mode": "i2v",
+  "output_language": "en",
+  "style": "natural_sentence",
+  "max_length": 80,
+  "negative_supported": true,
+  "element_order": [
+    "subject",
+    "motion",
+    "camera_motion",
+    "lighting",
+    "style"
+  ],
+  "skip_elements": [
+    "outfit",
+    "background"
+  ],
+  "system_prompt": "You write video prompts for Wan2.2 image-to-video. The first frame is given as an image, so do not describe appearance in detail. Describe only motion, how it develops over time, and camera movement.",
+  "example_prompts": [
+    "The hero slowly raises his sword, his cape billowing in the wind, then turns his head toward the camera. The camera slowly dollies in."
+  ],
+  "temperature": 0.7,
+  "prefix": "",
+  "suffix": "",
+  "reference_image_mode": false
+}

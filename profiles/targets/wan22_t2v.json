@@ -1,0 +1,28 @@
+{
+  "name": "Wan2.2 T2V",
+  "type": "video",
+  "mode": "t2v",
+  "output_language": "en",
+  "style": "natural_sentence",
+  "max_length": 120,
+  "negative_supported": true,
+  "element_order": [
+    "subject",
+    "outfit",
+    "background",
+    "motion",
+    "camera_motion",
+    "lighting",
+    "camera",
+    "style"
+  ],
+  "skip_elements": [],
+  "system_prompt": "You write text-to-video prompts for Wan2.2. Describe the subject and setting, then the motion over time, then camera movement, lighting and style, in natural English sentences.",
+  "example_prompts": [
+    "A young witch in a dark green cloak walks through a misty forest at dawn, holding a glowing lantern. She stops and looks up as birds take off from the trees. The camera follows her from behind, then cranes up. Soft golden light, film grain, cinematic."
+  ],
+  "temperature": 0.7,
+  "prefix": "",
+  "suffix": "",
+  "reference_image_mode": false
+}

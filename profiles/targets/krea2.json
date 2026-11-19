@@ -1,0 +1,28 @@
+{
+  "name": "Krea2",
+  "type": "image",
+  "mode": "t2i",
+  "output_language": "en",
+  "style": "natural_sentence",
+  "max_length": 120,
+  "negative_supported": false,
+  "element_order": [
+    "subject",
+    "pose",
+    "expression",
+    "outfit",
+    "background",
+    "lighting",
+    "camera",
+    "style"
+  ],
+  "skip_elements": [],
+  "system_prompt": "You write text-to-image prompts for Krea2. Describe the scene in clear natural English sentences: subject first, then pose and expression, outfit, setting, lighting, camera and style. Prefer concrete visual details and photographic terms.",
+  "example_prompts": [
+    "A young woman with silver hair and a blue cape stands on a windy cliff at dusk, gazing toward a distant castle. Warm rim light outlines her hair while the sky fades from orange to violet. Medium shot, 35mm lens, shallow depth of field, cinematic film look."
+  ],
+  "temperature": 0.6,
+  "prefix": "",
+  "suffix": "",
+  "reference_image_mode": false
+}

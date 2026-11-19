@@ -1,0 +1,3 @@
+Reply with a single JSON object only. Do not add explanations, comments or code fences.
+The JSON must follow this schema:
+{schema}

@@ -1,0 +1,28 @@
+{
+  "name": "Qwen2.1",
+  "type": "image",
+  "mode": "t2i",
+  "output_language": "en",
+  "style": "natural_sentence",
+  "max_length": 150,
+  "negative_supported": true,
+  "element_order": [
+    "subject",
+    "pose",
+    "expression",
+    "outfit",
+    "background",
+    "lighting",
+    "camera",
+    "style"
+  ],
+  "skip_elements": [],
+  "system_prompt": "You write text-to-image prompts for Qwen-Image. Use detailed natural English sentences. Mention any text to be drawn in the image in double quotes. Describe subject, action, setting, lighting, composition and style.",
+  "example_prompts": [
+    "An old bookstore at night, warm lamplight spilling over wooden shelves. A cat sleeps on a stack of books beside a hand-written sign that reads \"Closed\". Soft cozy atmosphere, eye-level shot, detailed illustration style."
+  ],
+  "temperature": 0.6,
+  "prefix": "",
+  "suffix": "",
+  "reference_image_mode": false
+}

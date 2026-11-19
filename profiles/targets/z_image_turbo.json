@@ -1,0 +1,28 @@
+{
+  "name": "Z-Image Turbo",
+  "type": "image",
+  "mode": "t2i",
+  "output_language": "en",
+  "style": "natural_sentence",
+  "max_length": 100,
+  "negative_supported": false,
+  "element_order": [
+    "subject",
+    "pose",
+    "expression",
+    "outfit",
+    "background",
+    "lighting",
+    "camera",
+    "style"
+  ],
+  "skip_elements": [],
+  "system_prompt": "You write text-to-image prompts for Z-Image Turbo, a fast distilled model run at CFG 1 (no negative prompt). Write a compact, vivid natural English description. Put the most important visual details first.",
+  "example_prompts": [
+    "Portrait of a knight in scarred silver armor, blue cape fluttering, determined expression, standing in a burning village at night, orange firelight, low angle, realistic photo, sharp focus."
+  ],
+  "temperature": 0.6,
+  "prefix": "",
+  "suffix": "",
+  "reference_image_mode": false
+}

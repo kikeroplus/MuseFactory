@@ -1,0 +1,29 @@
+{
+  "name": "Qwen2511 Edit",
+  "type": "image",
+  "mode": "edit",
+  "output_language": "en",
+  "style": "natural_sentence",
+  "max_length": 80,
+  "negative_supported": true,
+  "element_order": [
+    "subject",
+    "pose",
+    "expression",
+    "outfit",
+    "background",
+    "lighting",
+    "style"
+  ],
+  "skip_elements": [
+    "camera"
+  ],
+  "system_prompt": "You write image editing instructions for Qwen-Image-Edit-2511. The input image already exists. Write short imperative English instructions describing only what to change, and say what must stay the same (face, identity, composition).",
+  "example_prompts": [
+    "Change her outfit to a black leather jacket and jeans, keep her face, hairstyle and pose unchanged. Replace the background with a rainy neon-lit street at night."
+  ],
+  "temperature": 0.5,
+  "reference_image_mode": true,
+  "prefix": "",
+  "suffix": ""
+}

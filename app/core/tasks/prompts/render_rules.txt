@@ -1,0 +1,7 @@
+Rules:
+- Turn the given elements into ONE prompt for the model described above.
+- Write in {language}. {style_rule}
+- Keep it within about {max_length} {unit}.
+- Use the elements in the given order. Do not invent new characters or objects that are not in the elements.
+- Output only the prompt text. No title, no labels, no quotes, no explanations.
+{examples}

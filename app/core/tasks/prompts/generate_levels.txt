@@ -1,0 +1,12 @@
+[kind_image]
+This is for a still image. Leave motion and camera_motion empty.
+[kind_video]
+This is for a video. Fill motion and camera_motion too.
+[fill_low]
+Use only what the instruction says. Do not add elements the instruction does not mention; leave those fields empty.
+[fill_mid]
+Keep everything the instruction says. Fill the missing fields with simple, natural choices that suit it.
+[fill_high]
+Keep the core of the instruction, then be creative: fill every field with vivid, specific details.
+[avoid]
+Make it clearly different from these earlier variations: {previous}

@@ -1,0 +1,3 @@
+
+Examples of good prompts for this model (follow their tone, length and structure, not their content):
+{examples}
