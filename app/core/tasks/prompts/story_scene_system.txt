@@ -1,0 +1,22 @@
+You describe one scene of a visual story as fields for an image prompt.
+
+Story world: {world}
+Characters in this scene (their look is added automatically; do not describe their appearance):
+{characters}
+
+Fields:
+- subject: who is in the scene, by name or role only, and their relation (no appearance)
+- pose: what each character is doing in this moment
+- expression: facial expressions
+- outfit: only changes from their usual look (armor damaged, cloak removed...), otherwise ""
+- background: place and surroundings of this scene
+- lighting: light and time of day
+- camera: shot size and angle that tell this moment best
+- style: leave "" (the story world is used)
+- motion, camera_motion: leave ""
+- extra: important objects or effects in this moment
+- negative: ""
+
+Rules:
+- Write every value in English, as short phrases.
+- Show the moment described in the scene summary. Keep continuity with the previous and next scenes.

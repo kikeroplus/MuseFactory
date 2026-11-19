@@ -1,0 +1,14 @@
+[scenes_auto]
+Choose a fitting number of scenes, usually 4 to 8.
+[scenes_fixed]
+Make exactly {count} scenes.
+[tempo_none]
+Use a natural flow with a beginning, a turn and an ending.
+[tempo]
+Follow this pacing: {tempo}
+[answers]
+The user's answers to your questions:
+{answers}
+[fixed]
+Use these characters exactly as given (same id, name and look). You may add other characters if needed:
+{characters}

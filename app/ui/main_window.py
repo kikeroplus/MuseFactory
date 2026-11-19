@@ -32,6 +32,7 @@ from .connection_dialog import ConnectionDialog
 from .extract_tab import ExtractTab
 from .generate_tab import GenerateTab
 from .process_tab import ProcessTab
+from .story_tab import StoryTab
 from .jobs_bridge import JobsBridge
 from ..gen import prismlab_link, results, text_io
 from ..gen.results_view import ResultsStrip
@@ -41,7 +42,7 @@ LIST_SUFFIXES = {".txt", ".json"}
 
 # 作業タブ (名前, 作るフェーズ)
 WORK_TABS = [
-    ("ストーリー", 4), ("ライブラリ", 5), ("LLM 比較", 5),
+    ("ライブラリ", 5), ("LLM 比較", 5),
 ]
 
 
@@ -208,6 +209,9 @@ class MainWindow(QMainWindow):
                                       self.selected_files, folder_text, self.on_files_saved, self.open_in_pwc,
                                       generate_files=self.generate_files)
         self.tabs.addTab(self.process_tab, "加工")
+        self.story_tab = StoryTab(self.target_profiles, self.queue, self.bridge, self.settings, folder_text,
+                                  self.on_files_saved, self.open_in_pwc, generate_files=self.generate_files)
+        self.tabs.addTab(self.story_tab, "ストーリー")
         for name, phase in WORK_TABS:
             placeholder = QLabel(f"「{name}」はフェーズ{phase}で作ります。")
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)

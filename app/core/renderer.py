@@ -53,8 +53,8 @@ def ordered_elements(data: dict, target: TargetProfile) -> list[tuple[str, str]]
     return items
 
 
-def build_prompt(data: dict, target: TargetProfile) -> tuple[str, str]:
-    """(system, user) を組み立てる。"""
+def build_prompt(data: dict, target: TargetProfile, verbatim: Optional[list[str]] = None) -> tuple[str, str]:
+    """(system, user) を組み立てる。verbatim: そのまま残させる言葉 (ストーリーのキャラの見た目など)。"""
     unit = "characters" if target.output_language in ("ja", "zh") else "words"
     examples = ""
     if target.example_prompts:
@@ -70,7 +70,25 @@ def build_prompt(data: dict, target: TargetProfile) -> tuple[str, str]:
     )
     system = f"{target.system_prompt.strip()}\n\n{rules}".strip()
     user = "\n".join(f"{name}: {value}" for name, value in ordered_elements(data, target))
+    phrases = [v for v in (verbatim or []) if v.strip()]
+    if phrases:
+        user += "\n\n" + prompts.fill("render_verbatim", phrases="\n".join(f'- "{v}"' for v in phrases))
     return system, user
+
+
+def ensure_verbatim(text: str, phrases: list[str], target: TargetProfile) -> tuple[str, list[str]]:
+    """phrases がどれも text に (大文字小文字を除いて) そのまま入っているようにする。
+
+    小さいモデルは言い換えることがあるので、抜けたものは頭に足す (見た目の一貫性を優先)。戻り値は (文, 足したもの)。
+    """
+    lower = text.lower()
+    missing = [p for p in phrases if p.strip() and p.strip().lower() not in lower]
+    if not missing:
+        return text, []
+    if target.style == "tags":
+        return join_parts(missing + [text], ", "), missing
+    head = " ".join(p.strip().rstrip(".") + "." for p in missing)
+    return join_parts([head, text], " "), missing
 
 
 _LABEL = re.compile(r"^\s*(?:\*\*)?(?:final\s+)?prompt(?:\*\*)?\s*[:：]\s*", re.IGNORECASE)
@@ -110,10 +128,17 @@ def finish(text: str, data: dict, target: TargetProfile) -> RenderResult:
 
 
 def render(client: LLMClient, data: dict, target: TargetProfile,
-           temperature: Optional[float] = None) -> RenderResult:
-    system, user = build_prompt(data, target)
+           temperature: Optional[float] = None, verbatim: Optional[list[str]] = None,
+           suffix: str = "") -> RenderResult:
+    """verbatim: そのまま残す言葉 (抜けたら頭に足す)。suffix: プロファイルの suffix の前に足す共通の末尾。"""
+    system, user = build_prompt(data, target, verbatim)
     result = client.chat(system, user, temperature=target.temperature if temperature is None else temperature,
                          purpose=f"render {target.name}")
     if not result.text.strip():
         raise ValueError("LLM の返事が空でした")
-    return finish(result.text, data, target)
+    body = clean_output(result.text)
+    if verbatim:
+        body, _added = ensure_verbatim(body, verbatim, target)
+    if suffix.strip():
+        body = join_parts([body, suffix], ", " if target.style == "tags" else " ")
+    return finish(body, data, target)

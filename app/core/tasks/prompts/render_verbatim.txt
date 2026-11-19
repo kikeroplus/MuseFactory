@@ -1,0 +1,2 @@
+Keep each of these phrases in the prompt exactly as written (same words, same order):
+{phrases}

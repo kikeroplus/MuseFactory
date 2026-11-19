@@ -1,0 +1,4 @@
+Scene {no} of {total}: {title}
+Summary: {summary}
+Previous scene: {previous}
+Next scene: {next}
